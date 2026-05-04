@@ -23,12 +23,7 @@ from feedback_module import collect_feedback, print_feedback_summary, get_feedba
 # 1. 파일 경로
 # =========================================================
 _DATA_DIR = r"C:\Users\JangKyoungJun\Downloads\서울살이_프로젝트\사용_csv_모음"
-HOUSING_CSV_PATH         = os.path.join(_DATA_DIR, "주거비_데이터_최종통합버전.csv")
-SUBWAY_HEADWAY_CSV       = os.path.join(_DATA_DIR, "지하철_배차간격_데이터.csv")
-BUS_ARRIVAL_CSV          = os.path.join(_DATA_DIR, "버스도착정보_통합.csv")
-SUBWAY_TRANSFER_LOAD_CSV = os.path.join(_DATA_DIR, "서울교통공사_역별요일별환승인원_통합.csv")
-SUBWAY_TRANSFER_TIME_CSV = os.path.join(_DATA_DIR, "서울교통공사_환승역거리 소요시간 정보_20250310.csv")
-BUS_ROUTE_BASE_XLSX      = os.path.join(_DATA_DIR, "서울시버스노선기본정보_통합본.xlsx")
+HOUSING_CSV_PATH = os.path.join(_DATA_DIR, "주거비_데이터_최종통합버전.csv")
 SAVE_DIR  = r"C:\Users\JangKyoungJun\Downloads\서울살이_프로젝트\api코드결과"
 SAVE_PATH = os.path.join(SAVE_DIR, "integrated_recommendation_result_v5.csv")
 
@@ -85,59 +80,10 @@ BAYESIAN_K = 10
 DEFAULT_BUS_WAIT_MIN                      = 4.0
 DEFAULT_SUBWAY_WAIT_MIN                   = 3.0
 DEFAULT_TRANSFER_PENALTY_PER_TRANSFER_MIN = 2.0
-BUS_CONGESTION_PENALTY = {0: 0.0, 3: 0.5, 4: 2.0, 5: 5.0}
 
 
 # =========================================================
-# 4. 혼잡계수 테이블 (TOPIS 통계 기반 추정값)
-# ─────────────────────────────────────────────────────────
-# 자가용: 출퇴근 피크에 도심 진입/이탈 방향이 막히는 패턴 반영
-# 버스:   전용차로 효과로 자가용 계수의 약 70% 수준
-# 지하철: 도로 무관, 혼잡에 의한 정차 지연만 (1.0~1.12)
-# 추후 실제 TOPIS CSV로 교체 가능한 구조
-# =========================================================
-CAR_CONGESTION_BY_HOUR: Dict[int, float] = {
-    0: 1.0, 1: 1.0, 2: 1.0, 3: 1.0, 4: 1.0, 5: 1.0,
-    6: 1.1,
-    7: 1.4,
-    8: 1.8,   # 출근 피크
-    9: 1.5,
-    10: 1.1, 11: 1.0,
-    12: 1.1, 13: 1.1,
-    14: 1.0, 15: 1.0,
-    16: 1.1,
-    17: 1.4,
-    18: 1.7,  # 퇴근 피크
-    19: 1.5,
-    20: 1.2,
-    21: 1.1, 22: 1.0, 23: 1.0,
-}
-
-BUS_CONGESTION_BY_HOUR: Dict[int, float] = {
-    h: max(1.0, round(v * 0.7, 2))
-    for h, v in CAR_CONGESTION_BY_HOUR.items()
-}
-
-SUBWAY_CONGESTION_BY_HOUR: Dict[int, float] = {
-    7: 1.08, 8: 1.12, 9: 1.08,
-    17: 1.05, 18: 1.08, 19: 1.07, 20: 1.04,
-}
-
-
-def get_car_coeff(hour: int) -> float:
-    return CAR_CONGESTION_BY_HOUR.get(hour, 1.0)
-
-
-def get_bus_coeff(hour: int) -> float:
-    return BUS_CONGESTION_BY_HOUR.get(hour, 1.0)
-
-
-def get_subway_coeff(hour: int) -> float:
-    return SUBWAY_CONGESTION_BY_HOUR.get(hour, 1.0)
-
-
-# =========================================================
-# 5. 서울 구별 법정동코드 / 구 중심 좌표
+# 4. 서울 구별 법정동코드 / 구 중심 좌표
 # =========================================================
 SEOUL_LAWD_CD: Dict[str, str] = {
     "종로구": "11110", "중구":    "11140", "용산구":   "11170", "성동구":  "11200",
@@ -802,81 +748,6 @@ def stage2_filter_dong(df: pd.DataFrame,
     return top_dong.reset_index(drop=True)
 
 
-# =========================================================
-# 13. 추가 교통 데이터 로드 / 룩업
-# =========================================================
-def load_subway_headway(path):
-    df = pd.read_csv(path, encoding="utf-8-sig")
-    df["station_key"] = df["statnNm"].apply(normalize_name)
-    df["barvlDt"]     = pd.to_numeric(df["barvlDt"], errors="coerce")
-    return df
-
-def load_bus_arrival(path):
-    df = pd.read_csv(path, encoding="utf-8-sig")
-    df["bus_stop_key"]          = df["정류소명"].apply(normalize_name)
-    for c in ["배차간격(분)","첫번째도착예정시간(초)","첫번째버스혼잡도","두번째도착예정시간(초)","두번째버스혼잡도"]:
-        df[c] = pd.to_numeric(df[c], errors="coerce")
-    return df
-
-def load_subway_transfer_load(path):
-    df = pd.read_csv(path, encoding="utf-8-sig")
-    df["station_key"] = df["역명"].apply(normalize_name)
-    df["평일(일평균)"] = pd.to_numeric(df["평일(일평균)"], errors="coerce")
-    return df
-
-def load_subway_transfer_time(path):
-    df = pd.read_excel(path) if path.lower().endswith((".xlsx",".xls")) else pd.read_csv(path, encoding="cp949")
-    df["station_key"]       = df["환승역명"].apply(normalize_name)
-    df["transfer_time_min"] = df["환승소요시간"].apply(parse_mmss_to_min)
-    return df
-
-def load_bus_route_base(path):
-    df = pd.read_excel(path, sheet_name=0)
-    df["route_no_key"] = df["노선번호"].astype(str).str.strip()
-    df["배차간격"]      = pd.to_numeric(df["배차간격"], errors="coerce")
-    return df
-
-def build_subway_wait_lookup(df):
-    w = df[df["barvlDt"].notna() & (df["barvlDt"]>=0)].copy()
-    res = {}
-    for k, g in w.groupby("station_key", dropna=False):
-        pos = g.loc[g["barvlDt"]>0,"barvlDt"]
-        res[k] = float(pos.min())/60 if not pos.empty else DEFAULT_SUBWAY_WAIT_MIN
-    return res
-
-def build_bus_stop_lookup(df):
-    res = {}
-    for k, g in df.groupby("bus_stop_key", dropna=False):
-        cands = []
-        for col in ["첫번째도착예정시간(초)","두번째도착예정시간(초)"]:
-            s = g[col].dropna(); s = s[s>0]
-            if not s.empty: cands.append(float(s.min())/60)
-        t = g["배차간격(분)"].dropna(); t = t[t>0]
-        if not t.empty: cands.append(float(t.min())/2)
-        wait = min(cands) if cands else DEFAULT_BUS_WAIT_MIN
-        cv = pd.concat([g["첫번째버스혼잡도"],g["두번째버스혼잡도"]]).dropna()
-        cv = cv[cv>=0]
-        pen = BUS_CONGESTION_PENALTY.get(int(round(cv.mean())),0.0) if not cv.empty else 0.0
-        res[k] = {"wait_min":wait,"congestion_penalty_min":pen}
-    return res
-
-def build_subway_load_lookup(df):
-    g = df.groupby("station_key",dropna=False)["평일(일평균)"].mean().reset_index()
-    g["p"] = g["평일(일평균)"].apply(subway_load_penalty)
-    return dict(zip(g["station_key"],g["p"]))
-
-def build_transfer_time_lookup(df):
-    g = df.groupby("station_key",dropna=False)["transfer_time_min"].mean().reset_index()
-    return dict(zip(g["station_key"],g["transfer_time_min"]))
-
-def build_bus_route_headway_lookup(df):
-    w = df.copy()
-    if "운행구분" in w.columns:
-        wd = w[w["운행구분"].astype(str).str.contains("평일",na=False)]
-        if not wd.empty: w = wd
-    w = w.dropna(subset=["route_no_key","배차간격"])
-    g = w.groupby("route_no_key",dropna=False)["배차간격"].min().reset_index()
-    return dict(zip(g["route_no_key"],g["배차간격"]))
 
 
 # =========================================================
@@ -908,46 +779,6 @@ def extract_transit_features(sub_paths):
     }
 
 
-def calculate_adjusted_transit_time(base_min, features, transfer_count,
-                                     sw_wait, sw_load, tr_time, bus_stop, bus_route_hw):
-    sw_wait = sw_wait or {}; sw_load = sw_load or {}; tr_time = tr_time or {}
-    bus_stop = bus_stop or {}; bus_route_hw = bus_route_hw or {}
-    if base_min is None or pd.isna(base_min):
-        return {k:None for k in ["adjusted_commute_time_min","bus_wait_min","subway_wait_min",
-                                  "transfer_penalty_min","bus_congestion_penalty_min",
-                                  "subway_congestion_penalty_min","has_subway","has_bus"]}
-    bwc, bcc, swc, scc = [],[],[],[]
-    for sn in features["bus_stop_names"]:
-        info = bus_stop.get(normalize_name(sn))
-        if info: bwc.append(info["wait_min"]); bcc.append(info["congestion_penalty_min"])
-    if not bwc:
-        for rn in features["bus_route_nos"]:
-            hw = bus_route_hw.get(str(rn).strip())
-            if hw and not pd.isna(hw) and hw>0: bwc.append(hw/2)
-    for sn in features["subway_station_names"]:
-        k = normalize_name(sn)
-        if sw_wait.get(k): swc.append(sw_wait[k])
-        if sw_load.get(k): scc.append(sw_load[k])
-    tp = 0.0
-    if features["transfer_station_names"]:
-        for sn in features["transfer_station_names"]:
-            tt = tr_time.get(normalize_name(sn))
-            tp += float(tt) if tt and not pd.isna(tt) else DEFAULT_TRANSFER_PENALTY_PER_TRANSFER_MIN
-    else:
-        tp = transfer_count * DEFAULT_TRANSFER_PENALTY_PER_TRANSFER_MIN
-    adj = (float(base_min)
-           + (min(bwc) if bwc else 0) + (min(swc) if swc else 0)
-           + tp + (max(bcc) if bcc else 0) + (max(scc) if scc else 0))
-    return {
-        "adjusted_commute_time_min":    round(adj,2),
-        "bus_wait_min":                 round(min(bwc) if bwc else 0,2),
-        "subway_wait_min":              round(min(swc) if swc else 0,2),
-        "transfer_penalty_min":         round(tp,2),
-        "bus_congestion_penalty_min":   round(max(bcc) if bcc else 0,2),
-        "subway_congestion_penalty_min":round(max(scc) if scc else 0,2),
-        "has_subway": len(swc) > 0,
-        "has_bus":    len(bwc) > 0,
-    }
 
 
 # =========================================================
@@ -955,29 +786,22 @@ def calculate_adjusted_transit_time(base_min, features, transfer_count,
 # =========================================================
 def calc_commute_both_ways(cand_x, cand_y, work_x, work_y,
                             transport_mode, depart_hour, depart_min,
-                            arrive_hour, arrive_min,
-                            sw_wait=None, sw_load=None, tr_time=None,
-                            bus_stop=None, bus_route_hw=None):
+                            arrive_hour, arrive_min):
     result = {}
 
     if transport_mode == "car":
-        # 출근: 집→직장
+        # 출근: 집→직장 (Phase 3에서 future/directions API로 교체 예정)
         try:
-            am    = get_drive_route_kakaomobility(cand_x, cand_y, work_x, work_y, KAKAO_MOBILITY_REST_API_KEY)
-            am_base = am["duration_sec"]/60 if am["duration_sec"] else None
-            # 혼잡계수 적용
-            am_coeff = get_car_coeff(depart_hour)
-            am_min   = round(am_base * am_coeff, 2) if am_base else None
+            am     = get_drive_route_kakaomobility(cand_x, cand_y, work_x, work_y, KAKAO_MOBILITY_REST_API_KEY)
+            am_min = round(am["duration_sec"]/60, 2) if am["duration_sec"] else None
         except Exception as e:
             am_min = None; result["am_error"] = str(e)
             print(f"  [카카오모빌리티 출근 오류] {str(e)[:100]}")
 
-        # 퇴근: 직장→집 (swap)
+        # 퇴근: 직장→집
         try:
-            pm    = get_drive_route_kakaomobility(work_x, work_y, cand_x, cand_y, KAKAO_MOBILITY_REST_API_KEY)
-            pm_base = pm["duration_sec"]/60 if pm["duration_sec"] else None
-            pm_coeff = get_car_coeff(arrive_hour)
-            pm_min   = round(pm_base * pm_coeff, 2) if pm_base else None
+            pm     = get_drive_route_kakaomobility(work_x, work_y, cand_x, cand_y, KAKAO_MOBILITY_REST_API_KEY)
+            pm_min = round(pm["duration_sec"]/60, 2) if pm["duration_sec"] else None
         except Exception as e:
             pm_min = None; result["pm_error"] = str(e)
             print(f"  [카카오모빌리티 퇴근 오류] {str(e)[:100]}")
@@ -986,114 +810,66 @@ def calc_commute_both_ways(cand_x, cand_y, work_x, work_y,
         result.update({
             "commute_time_am_min": am_min,
             "commute_time_pm_min": pm_min,
-            "commute_time_min":    round(max(valid),2) if valid else None,
-            "car_coeff_am":        get_car_coeff(depart_hour),
-            "car_coeff_pm":        get_car_coeff(arrive_hour),
+            "commute_time_min":    round(max(valid), 2) if valid else None,
+            "car_coeff_am":        None,
+            "car_coeff_pm":        None,
             "distance_m":          am.get("distance_m") if "am" in dir() and am_min else None,
             "api_ok":              am_min is not None,
         })
 
-    else:  # transit
+    else:  # transit — ODsay pathTime 그대로 사용
         def _transit(ox, oy, dx, dy):
-            r   = get_transit_route_odsay(ox, oy, dx, dy, ODSAY_API_KEY)
-            bc  = safe_to_int(r.get("bus_transit_count"),0)
-            sc  = safe_to_int(r.get("subway_transit_count"),0)
-            ft  = extract_transit_features(r.get("sub_paths",[]))
-            adj = calculate_adjusted_transit_time(
-                r.get("total_time_min"), ft, bc+sc,
-                sw_wait, sw_load, tr_time, bus_stop, bus_route_hw,
-            )
-            return r, ft, adj
+            return get_transit_route_odsay(ox, oy, dx, dy, ODSAY_API_KEY)
 
-        am_r = am_ft = am_adj = None
-        pm_r = pm_ft = pm_adj = None
+        am_r = pm_r = None
 
         try:
-            am_r, am_ft, am_adj = _transit(cand_x, cand_y, work_x, work_y)
+            am_r = _transit(cand_x, cand_y, work_x, work_y)
         except Exception as e:
             err_str = str(e)
-            # -98: 출도착지 700m 이내 → 도보로 처리
             if "-98" in err_str:
-                dist_m = haversine_km(work_y, work_x, cand_y, cand_x) * 1000
-                walk_min = round(dist_m / 80, 1)  # 도보 80m/분
+                dist_m   = haversine_km(work_y, work_x, cand_y, cand_x) * 1000
+                walk_min = round(dist_m / 80, 1)
                 am_r = {"total_time_min": walk_min, "total_walk_m": dist_m,
                         "bus_transit_count": 0, "subway_transit_count": 0, "sub_paths": []}
-                am_ft = {"bus_stop_names":[], "subway_station_names":[], "bus_route_nos":[], "transfer_station_names":[]}
-                am_adj = {"adjusted_commute_time_min": walk_min, "bus_wait_min":0, "subway_wait_min":0,
-                          "transfer_penalty_min":0, "bus_congestion_penalty_min":0,
-                          "subway_congestion_penalty_min":0, "has_subway":False, "has_bus":False}
                 print(f"  [도보 처리] 700m 이내 → 도보 약 {walk_min:.0f}분")
             else:
                 result["am_error"] = err_str
                 print(f"  [ODsay 출근 오류] {err_str[:100]}")
 
         try:
-            pm_r, pm_ft, pm_adj = _transit(work_x, work_y, cand_x, cand_y)
+            pm_r = _transit(work_x, work_y, cand_x, cand_y)
         except Exception as e:
             err_str = str(e)
             if "-98" in err_str:
-                dist_m = haversine_km(work_y, work_x, cand_y, cand_x) * 1000
+                dist_m   = haversine_km(work_y, work_x, cand_y, cand_x) * 1000
                 walk_min = round(dist_m / 80, 1)
                 pm_r = {"total_time_min": walk_min, "total_walk_m": dist_m,
                         "bus_transit_count": 0, "subway_transit_count": 0, "sub_paths": []}
-                pm_ft = {"bus_stop_names":[], "subway_station_names":[], "bus_route_nos":[], "transfer_station_names":[]}
-                pm_adj = {"adjusted_commute_time_min": walk_min, "bus_wait_min":0, "subway_wait_min":0,
-                          "transfer_penalty_min":0, "bus_congestion_penalty_min":0,
-                          "subway_congestion_penalty_min":0, "has_subway":False, "has_bus":False}
             else:
                 result["pm_error"] = err_str
                 print(f"  [ODsay 퇴근 오류] {err_str[:100]}")
 
-        am_base = am_adj["adjusted_commute_time_min"] if am_adj else None
-        pm_base = pm_adj["adjusted_commute_time_min"] if pm_adj else None
+        am_min = am_r["total_time_min"] if am_r else None
+        pm_min = pm_r["total_time_min"] if pm_r else None
+        if am_min is not None: am_min = round(am_min, 2)
+        if pm_min is not None: pm_min = round(pm_min, 2)
 
-        # 혼잡계수 적용
-        # has_subway/has_bus를 룩업 결과가 아닌 ODsay subPath에서 직접 판단
-        # (룩업 실패 시 계수가 1.0으로 유지되는 버그 수정)
-        def _detect_transit_types(ft):
-            has_sub = len(ft.get("subway_station_names", [])) > 0 if ft else False
-            has_b   = len(ft.get("bus_stop_names", [])) > 0 if ft else False
-            # 둘 다 없으면 지하철로 가정 (ODsay가 경로를 줬으므로 대중교통임)
-            if not has_sub and not has_b:
-                has_sub = True
-            return has_sub, has_b
-
-        has_subway, has_bus = _detect_transit_types(am_ft)
-
-        if am_base is not None:
-            # 버스와 지하철이 섞인 경우 최대 계수 사용
-            am_coeff = 1.0
-            if has_bus:    am_coeff = max(am_coeff, get_bus_coeff(depart_hour))
-            if has_subway: am_coeff = max(am_coeff, get_subway_coeff(depart_hour))
-            am_min = round(am_base * am_coeff, 2)
-        else:
-            am_min = None
-
-        if pm_base is not None:
-            pm_coeff = 1.0
-            if has_bus:    pm_coeff = max(pm_coeff, get_bus_coeff(arrive_hour))
-            if has_subway: pm_coeff = max(pm_coeff, get_subway_coeff(arrive_hour))
-            pm_min = round(pm_base * pm_coeff, 2)
-        else:
-            pm_min = None
-
-        valid = [v for v in [am_min, pm_min] if v]
+        am_ft = extract_transit_features(am_r.get("sub_paths", [])) if am_r else None
+        valid  = [v for v in [am_min, pm_min] if v]
         result.update({
-            "commute_time_am_min":     am_min,
-            "commute_time_pm_min":     pm_min,
-            "commute_time_min":        round(max(valid),2) if valid else None,
-            "basic_commute_time_min":  am_r["total_time_min"] if am_r else None,
-            "transit_coeff_am":        am_coeff if am_min else None,
-            "transit_coeff_pm":        pm_coeff if pm_min else None,
-            "transfer_count":          (safe_to_int(am_r.get("bus_transit_count"),0)
-                                        +safe_to_int(am_r.get("subway_transit_count"),0)) if am_r else None,
-            "walk_distance_m":         am_r.get("total_walk_m") if am_r else None,
-            **(am_adj if am_adj else {}),
-            "bus_stop_names_used":     ", ".join(am_ft.get("bus_stop_names",[]))     if am_ft else None,
-            "subway_station_names_used":  ", ".join(am_ft.get("subway_station_names",[]))  if am_ft else None,
-            "transfer_station_names_used":  ", ".join(am_ft.get("transfer_station_names",[]))  if am_ft else None,
-            "bus_route_nos_used":      ", ".join(map(str,am_ft.get("bus_route_nos",[]))) if am_ft else None,
-            "api_ok":                  am_min is not None,
+            "commute_time_am_min":          am_min,
+            "commute_time_pm_min":          pm_min,
+            "commute_time_min":             round(max(valid), 2) if valid else None,
+            "basic_commute_time_min":       am_min,
+            "transfer_count":               (safe_to_int(am_r.get("bus_transit_count"), 0)
+                                             + safe_to_int(am_r.get("subway_transit_count"), 0)) if am_r else None,
+            "walk_distance_m":              am_r.get("total_walk_m") if am_r else None,
+            "bus_stop_names_used":          ", ".join(am_ft.get("bus_stop_names", []))          if am_ft else None,
+            "subway_station_names_used":    ", ".join(am_ft.get("subway_station_names", []))    if am_ft else None,
+            "transfer_station_names_used":  ", ".join(am_ft.get("transfer_station_names", []))  if am_ft else None,
+            "bus_route_nos_used":           ", ".join(map(str, am_ft.get("bus_route_nos", []))) if am_ft else None,
+            "api_ok":                       am_min is not None,
         })
 
     return result
@@ -1585,14 +1361,6 @@ def run_recommendation(housing_csv_path, work_address, transport_mode,
     # 정책 캐시 초기화 (새 추천 시작)
     reset_policy_cache()
 
-    # 교통 데이터 로드 (transit만)
-    sw_wait = sw_load = tr_time = bus_stop = bus_route_hw = None
-    if transport_mode == "transit":
-        sw_wait      = build_subway_wait_lookup(load_subway_headway(SUBWAY_HEADWAY_CSV))
-        bus_stop     = build_bus_stop_lookup(load_bus_arrival(BUS_ARRIVAL_CSV))
-        sw_load      = build_subway_load_lookup(load_subway_transfer_load(SUBWAY_TRANSFER_LOAD_CSV))
-        tr_time      = build_transfer_time_lookup(load_subway_transfer_time(SUBWAY_TRANSFER_TIME_CSV))
-        bus_route_hw = build_bus_route_headway_lookup(load_bus_route_base(BUS_ROUTE_BASE_XLSX))
 
     # 직장 좌표 (층·호·방향 등 상세정보 제거 후 지오코딩)
     work_address_clean = clean_work_address(work_address)
@@ -1719,7 +1487,6 @@ def run_recommendation(housing_csv_path, work_address, transport_mode,
             commute = calc_commute_both_ways(
                 float(mrow["cand_x"]), float(mrow["cand_y"]), work_x, work_y,
                 transport_mode, depart_hour, depart_min, arrive_hour, arrive_min,
-                sw_wait, sw_load, tr_time, bus_stop, bus_route_hw,
             )
             base.update(commute)
             stage3_all.append(base)
