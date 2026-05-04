@@ -56,6 +56,55 @@ SCHOOL_CODE = {
     "0049004": "석박사", "0049005": "제한없음",
 }
 
+# 소득 기준 상수 (보건복지부 고시 2024년 기준)
+MEDIAN_INCOME_1PERSON = 228  # 1인 가구 기준 중위소득 (만원/월)
+NEAR_POOR_THRESHOLD   = 115  # 차상위계층 근사치 (중위소득 50%)
+
+# 추정 산식 상수 — 학술/공공 표준 없음, 동네 간 상대 비교용
+ASSUMED_RESIDENCE_MONTHS    = 12    # 거주기간 가정 (12개월)
+ASSUMED_MAX_BENEFIT_RATIO   = 0.5   # 최대지원금 중 수혜 비율 가정 (50%)
+MARKET_RENT_REFERENCE_MANWON = 50   # 시세 할인 기준 참조 월세 (만원)
+ASSUMED_OPPORTUNITY_RATE    = 0.045 # 보증금 기회비용 연이율 (4.5% 가정)
+
+# 전월세 전환율 테이블 (한국부동산원 2024 참고값, 연%)
+# 근거: 주택임대차보호법 제7조의2, 시행령 제9조 (MIN[기준금리+2%, 10%])
+# 법정 계산식: 보증금 × 전환율(연) ÷ 12 = 월 환산액
+# ※ 반기 1회 갱신 권장 (한국부동산원 R-ONE stat.reb.or.kr)
+_CONVERSION_RATE_TABLE: Dict[str, float] = {
+    "강남구": 5.2, "서초구": 5.1, "송파구": 5.3, "강동구": 5.5,
+    "마포구": 5.6, "용산구": 5.3, "성동구": 5.7, "광진구": 5.8,
+    "동대문구": 6.0, "중랑구": 6.2, "성북구": 6.1, "강북구": 6.3,
+    "도봉구": 6.2, "노원구": 6.1, "은평구": 6.0, "서대문구": 5.9,
+    "종로구": 5.8, "중구": 5.7, "양천구": 5.8, "강서구": 5.9,
+    "구로구": 6.1, "금천구": 6.2, "영등포구": 5.8, "동작구": 5.9,
+    "관악구": 6.0,
+}
+_CONVERSION_RATE_DEFAULT = 6.0  # 폴백 (법정 상한 근사치)
+
+# 중복 수혜 제한 키워드
+DUP_LIMIT_KEYWORDS = [
+    "중복 불가", "중복불가", "중복 신청 불가",
+    "타 사업과", "유사 사업", "동일 사업",
+    "중복 수혜 제한", "중복지원 제한",
+]
+
+# 산식 신뢰도 표시
+_BENEFIT_RELIABILITY: Dict[str, str] = {
+    "월세보조":  "★★★ 정책 공고문 명시 금액",
+    "보증금지원": "★★☆ 법정 전환율 적용 (추정)",
+    "최대지원":  "★★☆ 12개월 균등 분할 가정 (추정)",
+    "시세할인":  "★★☆ 평균 시세 기준 (추정)",
+    "임대료할인": "★★☆ 평균 시세 기준 (추정)",
+    "공공임대":  "★☆☆ 공공임대 평균 기준 (추정)",
+    "전세대출":  "★☆☆ 이자 절감액 추정",
+    "월세지원":  "★☆☆ 기본값 추정",
+    "주거수당":  "★☆☆ 기본값 추정",
+    "이자지원":  "★☆☆ 기본값 추정",
+    "보증보험":  "★☆☆ 기본값 추정",
+    "관리비지원": "★☆☆ 기본값 추정",
+    "주거관련":  "★☆☆ 구체적 혜택 미확인",
+}
+
 # ──────────────────────────────────────────────────────────
 # 주거비 절감 패턴 테이블
 # ──────────────────────────────────────────────────────────
@@ -102,6 +151,16 @@ def collect_youth_info() -> Dict[str, str]:
     print("  취업상태: 1=재직자  2=자영업자  3=미취업자  4=프리랜서  5=일경험없음")
     emp_map = {"1": "재직자", "2": "자영업자", "3": "미취업자", "4": "프리랜서", "5": "일경험없음"}
     info["employment"] = emp_map.get(input("  선택 (비우면 전체): ").strip(), "")
+
+    raw_inc = input("\n  월 소득 (만원, 예: 200, 비우면 건너뜀): ").strip()
+    info["income_manwon"] = raw_inc if raw_inc.isdigit() else ""
+
+    print("  혼인상태: 1=미혼  2=기혼")
+    mrg_map = {"1": "미혼", "2": "기혼"}
+    info["marriage"] = mrg_map.get(input("  선택 (비우면 전체): ").strip(), "")
+
+    no_house = input("  무주택 여부 (y=무주택 / n=주택소유 / 비우면 건너뜀): ").strip().lower()
+    info["no_house"] = no_house if no_house in ("y", "n") else ""
 
     return info
 
@@ -208,13 +267,109 @@ def _check_employment(p: dict, user_emp: str) -> bool:
     return user_emp in text or "전체" in text or "제한없음" in text
 
 
+def _check_income(p: dict, user_income_manwon: str) -> bool:
+    if not user_income_manwon:
+        return True
+    try:
+        user_inc = float(user_income_manwon)
+    except ValueError:
+        return True
+    # earnMaxAmt 우선 적용 (정책 공고문의 구체적 상한액)
+    earn_max = str(p.get("earnMaxAmt", "0")).strip()
+    if earn_max and earn_max not in ("0", "", "None"):
+        try:
+            return user_inc <= float(earn_max)
+        except ValueError:
+            pass
+    # earnCndSeCd 코드로 판단
+    earn_cd = str(p.get("earnCndSeCd", "")).strip()
+    if earn_cd == "0043001":   # 제한없음
+        return True
+    if earn_cd == "0043002":   # 중위소득 이하
+        return user_inc <= MEDIAN_INCOME_1PERSON
+    if earn_cd == "0043003":   # 기초수급/차상위
+        return user_inc <= NEAR_POOR_THRESHOLD
+    return True
+
+
+def _check_marriage(p: dict, user_marriage: str) -> bool:
+    if not user_marriage:
+        return True
+    mrg_cd = str(p.get("mrgSttsCd", "")).strip()
+    if not mrg_cd or mrg_cd == "0055003":   # 제한없음
+        return True
+    policy_mrg = MARRIAGE_CODE.get(mrg_cd, "")
+    return not policy_mrg or policy_mrg == user_marriage
+
+
+_EDU_ORDER = {"고졸이하": 1, "대학재학": 2, "대졸": 3, "석박사": 4}
+
+
+def _check_education(p: dict, user_edu: str) -> bool:
+    if not user_edu:
+        return True
+    school_cd = str(p.get("schoolCd", "")).strip()
+    if not school_cd or school_cd == "0049005":   # 제한없음
+        return True
+    policy_edu = SCHOOL_CODE.get(school_cd, "")
+    if not policy_edu:
+        return True
+    # "대학재학" 조건은 재학 중인 사람만 해당 (대졸자 불가)
+    if policy_edu == "대학재학":
+        return user_edu == "대학재학"
+    # 그 외는 "해당 학력 이상" 조건으로 해석
+    return _EDU_ORDER.get(user_edu, 0) >= _EDU_ORDER.get(policy_edu, 0)
+
+
+def _check_no_house(p: dict, no_house: str) -> bool:
+    if no_house != "n":   # 무주택 여부 모름이거나 무주택이면 통과
+        return True
+    # 주택 소유자인 경우: 정책 텍스트에 "무주택" 요건이 있으면 제외
+    text = _extract_policy_text(p)
+    return "무주택" not in text
+
+
+def conversion_rate_lookup(gu_name: str = "") -> float:
+    """자치구별 전월세 전환율 반환 (연%, 한국부동산원 통계 기반).
+
+    근거: 주택임대차보호법 제7조의2, 시행령 제9조
+    """
+    return _CONVERSION_RATE_TABLE.get(gu_name, _CONVERSION_RATE_DEFAULT)
+
+
+def detect_dup_limit(p: dict) -> bool:
+    """정책 텍스트에서 중복 수혜 제한 키워드 탐지."""
+    text = _extract_policy_text(p)
+    return any(kw in text for kw in DUP_LIMIT_KEYWORDS)
+
+
+def _auto_match_labels(p: dict, user_info: Dict[str, str]) -> str:
+    """자동 매칭 확인된 조건 목록을 문자열로 반환 (후보 목록 표시용)."""
+    labels = []
+    if user_info.get("age") and (p.get("sprtTrgtMinAge") or p.get("sprtTrgtMaxAge")):
+        labels.append("나이")
+    earn_max = str(p.get("earnMaxAmt", "0"))
+    earn_cd  = str(p.get("earnCndSeCd", ""))
+    has_income_field = earn_max not in ("0", "", "None") or (earn_cd and earn_cd != "0043001")
+    if user_info.get("income_manwon") and has_income_field:
+        labels.append("소득")
+    if user_info.get("marriage") and p.get("mrgSttsCd") and p.get("mrgSttsCd") != "0055003":
+        labels.append("혼인")
+    if user_info.get("education") and p.get("schoolCd") and p.get("schoolCd") != "0049005":
+        labels.append("학력")
+    if not labels:
+        return ""
+    return "✅ " + " · ".join(labels) + " 자동매칭"
+
+
 # ──────────────────────────────────────────────────────────
 # 혜택 분석
 # ──────────────────────────────────────────────────────────
-def analyze_benefit(p: dict) -> dict:
+def analyze_benefit(p: dict, gu_name: str = "") -> dict:
     text = _extract_policy_text(p)
     is_housing = _is_housing_related(p)
     best_saving, best_type, best_desc = 0.0, "", ""
+    conv_rate = conversion_rate_lookup(gu_name) / 100  # 연% → 소수
 
     for pattern, btype, default, tmpl in BENEFIT_PATTERNS:
         m = re.search(pattern, text)
@@ -226,18 +381,22 @@ def analyze_benefit(p: dict) -> dict:
             except (ValueError, IndexError):
                 amt = 0
             if btype == "월세보조":
+                # 근거: 정책 공고문 명시 금액 (신뢰도 ★★★)
                 sv, ds = amt, tmpl.format(amount=f"{amt:.0f}")
             elif btype == "보증금지원":
-                sv = round(amt / 200, 1) if amt > 0 else 0
-                ds = tmpl.format(amount=f"{amt:.0f}") + f" (월 환산 약 {sv:.0f}만원 절감)"
+                # 근거: 주택임대차보호법 제7조의2 법정 전환율 (신뢰도 ★★☆)
+                sv = round(amt * conv_rate / 12, 1) if amt > 0 else 0
+                ds = tmpl.format(amount=f"{amt:.0f}") + f" (월 환산 약 {sv:.0f}만원, 전환율 {conv_rate*100:.1f}%)"
             elif btype == "최대지원":
-                sv = round(amt * 0.5 / 12, 1) if amt > 0 else 0
+                # 추정: ASSUMED_RESIDENCE_MONTHS 균등 분할 + ASSUMED_MAX_BENEFIT_RATIO 수혜율
+                sv = round(amt * ASSUMED_MAX_BENEFIT_RATIO / ASSUMED_RESIDENCE_MONTHS, 1) if amt > 0 else 0
                 ds = tmpl.format(amount=f"{amt:.0f}") + f" (월 환산 약 {sv:.0f}만원 절감 추정)"
             elif btype == "시세할인":
-                sv = round((100 - amt) / 100 * 50, 1) if amt < 100 else 0
+                # 추정: MARKET_RENT_REFERENCE_MANWON 기준 (신뢰도 ★★☆)
+                sv = round((100 - amt) / 100 * MARKET_RENT_REFERENCE_MANWON, 1) if amt < 100 else 0
                 ds = tmpl.format(amount=f"{amt:.0f}") + f" (월 약 {sv:.0f}만원 절감 추정)"
             elif btype == "임대료할인":
-                sv = round(amt / 100 * 50, 1)
+                sv = round(amt / 100 * MARKET_RENT_REFERENCE_MANWON, 1)
                 ds = tmpl.format(amount=f"{amt:.0f}") + f" (월 약 {sv:.0f}만원 절감 추정)"
             else:
                 sv = default or 0
@@ -257,7 +416,7 @@ def analyze_benefit(p: dict) -> dict:
         "benefit_type": best_type,
         "monthly_saving": best_saving,
         "benefit_desc": best_desc,
-        "saving_pct": round(best_saving / 50.0 * 100, 1) if best_saving > 0 else 0.0,
+        "saving_pct": round(best_saving / MARKET_RENT_REFERENCE_MANWON * 100, 1) if best_saving > 0 else 0.0,
     }
 
 
@@ -369,12 +528,14 @@ def verify_policy_with_user(p: dict, idx: int) -> bool:
 def policy_selection_flow(all_policies: List[dict],
                            user_info: Dict[str, str],
                            gu_name: str = "",
-                           max_display: int = 3) -> Tuple[float, List[dict]]:
+                           max_display: int = 3,
+                           user_budget_monthly: float = 50.0,
+                           auto_confirm: bool = False) -> Tuple[float, List[dict]]:
     """
-    1차) 기본 필터(서울/나이/취업) + 주거 혜택 분석
+    1차) 기본 필터(서울/나이/취업/소득/혼인/학력/무주택) + 주거 혜택 분석
     2차) 후보 목록 표시 → 사용자 선택
     3차) 상세 조건 확인
-    4차) 확인된 정책만 점수 반영
+    4차) 확인된 정책만 점수 반영 (사용자 예산 대비 비율)
 
     Returns: (점수 0~100, 확인된 정책 리스트)
     """
@@ -387,8 +548,16 @@ def policy_selection_flow(all_policies: List[dict],
             continue
         if not _check_employment(p, user_info.get("employment", "")):
             continue
+        if not _check_income(p, user_info.get("income_manwon", "")):
+            continue
+        if not _check_marriage(p, user_info.get("marriage", "")):
+            continue
+        if not _check_education(p, user_info.get("education", "")):
+            continue
+        if not _check_no_house(p, user_info.get("no_house", "")):
+            continue
 
-        benefit = analyze_benefit(p)
+        benefit = analyze_benefit(p, gu_name)
         if benefit["monthly_saving"] > 0:
             p["_monthly_saving"] = benefit["monthly_saving"]
             p["_benefit_type"] = benefit["benefit_type"]
@@ -413,6 +582,33 @@ def policy_selection_flow(all_policies: List[dict],
         print(f"\n  [{gu_name}] 주거비 절감에 도움되는 정책이 없습니다.")
         return 0.0, []
 
+    # ── auto_confirm 모드: 챗봇/Streamlit에서 자동 선택 ──
+    if auto_confirm:
+        top_n = min(max_display, len(candidates))
+        verified = candidates[:top_n]
+        for p in verified:
+            p.setdefault("_uncertain", False)
+        print(f"\n  [{gu_name}] 청년정책 {top_n}건 자동 매칭")
+        for i, p in enumerate(verified, 1):
+            print(f"  [{i}] {p.get('plcyNm','')}  (월 약 {p['_monthly_saving']:.0f}만원 절감)")
+
+        top_savings = [p["_monthly_saving"] for p in verified[:3]]
+        total = sum(top_savings)
+        ref = max(user_budget_monthly, 1.0)
+        score = min(100.0, round(total / ref * 100, 2))
+        uncertain_count = sum(1 for p in verified[:3] if p.get("_uncertain"))
+        if uncertain_count > 0:
+            penalty = 0.7 + 0.1 * (3 - uncertain_count)
+            score = round(score * penalty, 2)
+
+        print(f"\n  ✅ 자동 반영: {len(verified)}건 / 정책 점수: {score:.0f}점")
+        dup_policies = [p for p in verified if detect_dup_limit(p)]
+        if dup_policies:
+            print(f"\n  ⚠ 중복 수혜 제한 가능성:")
+            for p in dup_policies:
+                print(f"    - {p.get('plcyNm', '')}")
+        return score, verified
+
     # ── 2차: 후보 목록 표시 → 사용자 선택 ──
     print(f"\n  [{gu_name}] 활용 가능한 청년정책 {len(candidates)}건 (1차 필터 통과)")
     print(f"  ────────────────────────────────────────")
@@ -427,8 +623,11 @@ def policy_selection_flow(all_policies: List[dict],
         min_a = p.get("sprtTrgtMinAge", "")
         max_a = p.get("sprtTrgtMaxAge", "")
         age_str = f" (만 {min_a}~{max_a}세)" if min_a or max_a else ""
+        match_label = _auto_match_labels(p, user_info)
 
         print(f"  {icon} [{i:>2}] {name}{age_str}")
+        if match_label:
+            print(f"        {match_label}")
         print(f"        혜택: {desc}  |  월 약 {saving:.0f}만원 절감")
         if org:
             print(f"        주관: {org}")
@@ -476,20 +675,29 @@ def policy_selection_flow(all_policies: List[dict],
         print(f"\n  조건을 충족하는 정책이 없습니다. (정책 점수 미반영)")
         return 0.0, []
 
-    # ── 4차: 확인된 정책만으로 점수 계산 ──
-    # 상위 3개 월 절감액 합산 → 월세 50만원 대비 비율
+    # ── 4차: 확인된 정책만으로 점수 계산 (Phase 6-4: 사용자 예산 대비 비율) ──
     top_savings = [p["_monthly_saving"] for p in verified[:3]]
     total = sum(top_savings)
-    score = min(100.0, round(total / 50.0 * 100, 2))
+    ref = max(user_budget_monthly, 1.0)
+    score = min(100.0, round(total / ref * 100, 2))
 
-    # 불확실 정책이 포함된 경우 점수 30% 감소
+    # 불확실 정책이 포함된 경우 점수 감소
     uncertain_count = sum(1 for p in verified[:3] if p.get("_uncertain"))
     if uncertain_count > 0:
-        penalty = 0.7 + 0.1 * (3 - uncertain_count)  # 1개 불확실=0.8, 2개=0.7, 3개=0.7
+        penalty = 0.7 + 0.1 * (3 - uncertain_count)
         score = round(score * penalty, 2)
 
     print(f"\n  ✅ 조건 확인 완료: {len(verified)}건 반영")
-    print(f"     정책 점수: {score:.0f}점 (월 약 {total:.0f}만원 절감 추정)")
+    print(f"     월 절감 추정: 약 {total:.0f}만원")
+    print(f"     정책 점수: {score:.0f}점 (예산 {ref:.0f}만원 대비 {total/ref*100:.0f}%)")
+
+    # ── 중복 수혜 경고 (Phase 6-5) ──
+    dup_policies = [p for p in verified if detect_dup_limit(p)]
+    if dup_policies:
+        print(f"\n  ⚠ 중복 수혜 제한 가능성 있는 정책:")
+        for p in dup_policies:
+            print(f"    - {p.get('plcyNm', '')}")
+        print(f"  → 중복 수혜 가능 여부는 각 정책 신청 URL에서 확인 필요")
 
     return score, verified
 
@@ -500,15 +708,78 @@ def policy_selection_flow(all_policies: List[dict],
 # 전역 캐시: 전체 정책은 1회만 조회
 _POLICY_CACHE: List[dict] = []
 
+# ──────────────────────────────────────────────────────────
+# 테스트 모드: test_v5_auto.py에서 True로 설정하면 API 호출 없이
+# MOCK_POLICIES로 동작 (Phase 6-4~6-6 코드 경로 검증용)
+# ──────────────────────────────────────────────────────────
+_TEST_MODE: bool = False
+
+MOCK_POLICIES: List[dict] = [
+    {
+        "plcyNm": "[테스트] 서울시 청년 월세 지원",
+        "plcySprtCn": "월 20만원 주거비 지원",
+        "plcyExplnCn": "만 19~39세 청년 무주택자 대상 월 20만원 주거비 지원.",
+        "lclsfNm": "주거",
+        "sprtTrgtMinAge": "19",
+        "sprtTrgtMaxAge": "39",
+        "zipCd": "11440",
+        "sprvsnInstCdNm": "서울특별시",
+        "earnCndSeCd": "0043001",
+        "mrgSttsCd": "0055003",
+        "schoolCd": "0049005",
+        "refUrlAddr1": "https://youth.seoul.go.kr",
+    },
+    {
+        "plcyNm": "[테스트] 마포구 청년 보증금 지원",
+        "plcySprtCn": "보증금 500만원 무이자 대출 지원",
+        "plcyExplnCn": "마포구 1인 청년가구 임차보증금 500만원 무이자 대출.",
+        "lclsfNm": "주거",
+        "sprtTrgtMinAge": "18",
+        "sprtTrgtMaxAge": "34",
+        "zipCd": "11440",
+        "sprvsnInstCdNm": "마포구",
+        "earnCndSeCd": "0043001",
+        "earnMaxAmt": "250",
+        "mrgSttsCd": "0055001",
+        "schoolCd": "0049005",
+        "refUrlAddr1": "https://www.mapo.go.kr",
+    },
+    {
+        "plcyNm": "[테스트] 행복주택 입주 지원",
+        "plcySprtCn": "공공임대 시세 60% 수준 제공. 타 사업과 중복 불가.",
+        "plcyExplnCn": "청년 대상 행복주택 입주 지원. 유사 사업과 중복 신청 불가.",
+        "lclsfNm": "주거",
+        "sprtTrgtMinAge": "19",
+        "sprtTrgtMaxAge": "39",
+        "zipCd": "11440",
+        "sprvsnInstCdNm": "한국토지주택공사",
+        "earnCndSeCd": "0043001",
+        "mrgSttsCd": "0055003",
+        "schoolCd": "0049005",
+        "refUrlAddr1": "https://apply.lh.or.kr",
+    },
+]
+
 
 def fetch_policies_for_gu(gu_name: str,
                            user_info: Dict[str, str],
-                           max_display: int = 3) -> Tuple[float, List[dict]]:
+                           max_display: int = 3,
+                           user_budget_monthly: float = 50.0,
+                           auto_confirm: bool = False) -> Tuple[float, List[dict]]:
     """
     추천된 주거지 구에 대한 청년정책 조회 + 선택 + 확인 + 점수.
     전체 정책은 전역 캐시에서 재사용.
+    _TEST_MODE=True 이면 API 호출 없이 MOCK_POLICIES 사용.
+    auto_confirm=True 이면 input() 없이 자동 선택 (챗봇/Streamlit 모드).
     """
     global _POLICY_CACHE
+
+    if _TEST_MODE:
+        print(f"\n  [테스트 모드] mock 정책 {len(MOCK_POLICIES)}건 사용 (API 호출 없음)")
+        return policy_selection_flow(
+            MOCK_POLICIES, user_info, gu_name, max_display, user_budget_monthly,
+            auto_confirm=auto_confirm,
+        )
 
     if not _POLICY_CACHE:
         print(f"\n  [온통청년 API] 전체 정책 조회 중...")
@@ -520,7 +791,8 @@ def fetch_policies_for_gu(gu_name: str,
             return 0.0, []
 
     return policy_selection_flow(
-        _POLICY_CACHE, user_info, gu_name, max_display
+        _POLICY_CACHE, user_info, gu_name, max_display, user_budget_monthly,
+        auto_confirm=auto_confirm,
     )
 
 
@@ -536,7 +808,9 @@ def reset_policy_cache():
 def print_policy_section(gu_name: str, score: float,
                           matched_policies: List[dict],
                           max_display: int = 3,
-                          conv_deposit: float = None) -> None:
+                          conv_deposit: float = None,
+                          user_info: Dict = None,
+                          user_budget_monthly: float = 50.0) -> None:
     """추천 결과 내 [청년정책 혜택] 섹션 출력 — 이미 검증된 정책만."""
     print("  [청년정책 혜택]")
     if not matched_policies:
@@ -546,41 +820,62 @@ def print_policy_section(gu_name: str, score: float,
     top = matched_policies[:max_display]
     top_savings = [p["_monthly_saving"] for p in top]
     total_saving = sum(top_savings)
+    ref_budget = max(user_budget_monthly, 1.0)
 
-    print(f"    · 정책 점수: {score:.0f}점 (조건 확인 완료, 최종 반영)")
+    print(f"    · 정책 점수: {score:.0f}점  (예산 {ref_budget:.0f}만원 대비 절감 비율)")
     print(f"    · 적용 정책 {len(top)}건:")
 
     for idx, p in enumerate(top, 1):
         name = p.get("plcyNm", "정책명 없음")
         saving = p["_monthly_saving"]
         desc = p["_benefit_desc"]
+        btype = p.get("_benefit_type", "")
         icon = "🏠" if p.get("_is_housing") else "💼"
         uncertain = " ⚠불확실" if p.get("_uncertain") else ""
+        reliability = _BENEFIT_RELIABILITY.get(btype, "")
 
         min_a = p.get("sprtTrgtMinAge", "")
         max_a = p.get("sprtTrgtMaxAge", "")
         age_str = f" (만 {min_a}~{max_a}세)" if min_a or max_a else ""
 
+        match_label = _auto_match_labels(p, user_info) if user_info else ""
+
         print(f"    {icon} [{idx}] {name}{age_str}{uncertain}")
+        if match_label:
+            print(f"         {match_label}")
         print(f"         혜택: {desc}")
         print(f"         월 절감: 약 {saving:.0f}만원")
+        if reliability:
+            print(f"         산출 근거: {reliability}")
 
         ref = p.get("refUrlAddr1", "") or p.get("aplyUrlAddr", "")
         if ref:
-            print(f"         상세: {ref}")
+            print(f"         신청 URL: {ref}")
 
     if total_saving > 0:
         print(f"    ──────────────────────────────")
         print(f"    · 예상 총 월 절감액: 약 {total_saving:.0f}만원")
         if conv_deposit and conv_deposit > 0:
-            monthly_equiv = conv_deposit / 200
+            conv_rate = conversion_rate_lookup(gu_name) / 100
+            monthly_equiv = conv_deposit * conv_rate / 12
             if monthly_equiv > 0:
                 pct = total_saving / monthly_equiv * 100
-                print(f"    · 이 매물 월 환산 주거비 대비 약 {pct:.0f}% 절감 가능")
+                print(f"    · 이 매물 월 환산 주거비({monthly_equiv:.0f}만원) 대비 약 {pct:.0f}% 절감 추정")
+
+    # 중복 수혜 경고
+    dup_policies = [p for p in top if detect_dup_limit(p)]
+    if dup_policies:
+        print(f"    ⚠ 중복 수혜 제한 가능성:")
+        for p in dup_policies:
+            print(f"      - {p.get('plcyNm', '')}")
 
     remaining = len(matched_policies) - max_display
     if remaining > 0:
         print(f"    · ...외 {remaining}건의 추가 확인 정책이 있습니다.")
+
+    print(f"    ──────────────────────────────")
+    print(f"    ※ 절감액은 동네 간 상대 비교용 추정값입니다.")
+    print(f"       정확한 자격·혜택은 각 정책 신청 URL에서 직접 확인하세요.")
 
 
 def is_youth_api_configured() -> bool:

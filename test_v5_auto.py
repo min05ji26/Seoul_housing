@@ -94,10 +94,15 @@ SCENARIOS = {
             "27",                   # 청년정책 나이
             "",                     # 청년정책 학력 (전체)
             "",                     # 청년정책 취업상태 (전체)
+            "",                     # 청년정책 월 소득 (건너뜀)
+            "",                     # 청년정책 혼인상태 (건너뜀)
+            "",                     # 청년정책 무주택 여부 (건너뜀)
             "5",                    # 매물당 정책 표시 수
             "",                     # 가중치 직접 변경 (자동 유지)
-            "",                     # 청년정책 선택 (건너뜀, 마포구)
-            "",                     # 안전 여분 input
+            "1,2,3",                # 청년정책 선택 (mock 3건 모두)
+            "y",                    # 정책 1 조건 확인
+            "y",                    # 정책 2 조건 확인
+            "y",                    # 정책 3 조건 확인
             "n",                    # 피드백 건너뜀
         ],
     },
@@ -159,6 +164,12 @@ def run_with_inputs(scenario_id):
     inputs_text = "\n".join(scenario["inputs"]) + "\n"
     sys.stdin = io.StringIO(inputs_text)
     
+    # 테스트 모드 활성화 (시나리오 3 이상: 청년정책 포함)
+    # API 호출 없이 MOCK_POLICIES로 동작하게 하여 불필요한 호출 차단
+    import youth_policy_module
+    youth_policy_module._TEST_MODE = True
+    youth_policy_module._POLICY_CACHE = []  # 이전 캐시 초기화
+
     # v5 import 후 main 실행
     try:
         import importlib.util
@@ -168,13 +179,13 @@ def run_with_inputs(scenario_id):
         )
         v5 = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(v5)
-        
+
         # v5에 main() 함수가 있다고 가정. 없으면 직접 호출 부분 확인 필요
         if hasattr(v5, "main"):
             v5.main()
         else:
             print("[안내] main() 함수 없음. 파일 끝 if __name__ 블록 확인 필요")
-            
+
     except EOFError:
         print()
         print("=" * 70)
@@ -187,6 +198,8 @@ def run_with_inputs(scenario_id):
         print("=" * 70)
         import traceback
         traceback.print_exc()
+    finally:
+        youth_policy_module._TEST_MODE = False
 
 
 # ===========================================================================
