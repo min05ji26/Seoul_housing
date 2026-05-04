@@ -300,17 +300,19 @@ if _missing_keys:
 
 ## 7. 이번 세션 작업 우선순위
 
-순서대로:
+### [2026-05-04 완료]
+1. ~~백업 생성 (3개 파일)~~ ✅
+2. ~~python-dotenv 설치~~ ✅
+3. ~~환경변수 분리~~ ✅ — .env, .env.example, .gitignore 생성 + 3개 파일 코드 수정
+4. ~~노트북 경로로 수정~~ ✅ — housing_recommendation_v5.py, feedback_module.py
+5. ~~scenario1~4 검증~~ ✅ — 정상 동작 확인
+6. ~~Git 초기 설정 + push~~ ✅ — `https://github.com/kj77kj7/housing_recommendation.git`
 
-1. **백업 생성** (3개 파일)
-2. **python-dotenv 설치** (사용자 직접)
-3. **환경변수 분리** — .env, .env.example, .gitignore 생성 + 3개 파일 코드 수정
-4. **노트북 경로로 수정** — _DATA_DIR, SAVE_DIR 경로 교체
-5. **scenario1 검증** — 환경변수 + 노트북 경로 정상 동작 확인
-6. **Phase 2 코드 제거 작업** — §6-1 표 순서대로
-7. **Phase 2 최종 검증** — scenario1~4 사용자 직접 실행
-8. **인수인계 파일 갱신** — Phase 2 완료 + 다음 행동 = "Phase 3" + 경로 PC별 차이 문제 기록
-9. **Git 첫 commit + push 안내** — 사용자가 직접 진행
+### [다음 세션에서 할 일]
+1. **Phase 2 코드 제거 작업** — §6-1 표 순서대로
+2. **Phase 2 최종 검증** — scenario1~4 사용자 직접 실행
+3. **인수인계 파일 갱신** — Phase 2 완료 + 다음 행동 = "Phase 3"
+4. **git commit + push**
 
 ### Git 작업 안내 (세션 마지막에 사용자에게 전달)
 
@@ -334,8 +336,8 @@ git pull
 
 ## 8. 다음 행동
 
-Claude Code 첫 응답:
-1. 이 지시문 읽었음 확인
-2. `Claude_Code_인수인계.md` 읽고 현황 파악 보고
-3. 현재 PC가 노트북(`JangKyoungJun`)인지 확인
-4. 백업 생성 후 환경변수 분리부터 시작 의향 확인 요청
+Claude Code 새 세션 첫 응답:
+1. 이 지시문 + `Claude_Code_인수인계.md` 읽고 현황 파악
+2. 현재 PC 확인 (노트북: `JangKyoungJun` / 데스크톱: `kj77k`)
+3. `git pull` 실행 → 최신 코드 확인
+4. **Phase 2 작업 시작** — §6-1 표의 #1부터 순서대로 진행 (사용자 동의 후)
