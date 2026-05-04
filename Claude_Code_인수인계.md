@@ -27,7 +27,11 @@
   - 단순화: calc_commute_both_ways (파라미터 5개 제거, ODsay pathTime 직접 사용)
   - 추가 수정: 데이터 한계 안내에서 "혼잡계수: TOPIS 통계 기반" 문구 제거 (Phase 2에서 폐지된 기능)
   - 검증 결과: ODsay IP 등록 후 시나리오1 정상 완료 (성동구 3개 매물 추천, 최단 11분)
-  - **다음 작업: Phase 3 (카카오 future/directions API 전환)**
+- **Phase 3 완료**: 자가용 API v1/directions → v1/future/directions 전환
+  - `_next_weekday_at()` 헬퍼 추가 (출발 시각 → YYYYMMDDHHMM 변환)
+  - `get_drive_route_kakaomobility()`: departure_time 파라미터 추가, future/directions 분기
+  - `calc_commute_both_ways()`: 출근/퇴근 시각을 각각 departure_time으로 전달
+  - **다음 작업: Phase 4 (자가용 시나리오 재검증)**
 
 ## API 키 설정 (신규 PC 작업 시 필수)
 
@@ -191,14 +195,19 @@ def next_weekday_at(hour, minute):
 
 Phase 1과 동일한 검증을 변경 후 코드로 수행.
 
-### Phase 5: vibe 학술 근거 메모 작성
+### Phase 5: vibe 측정 근거 정리 메모 작성
 
-다음 학술 자료 정리해서 `vibe_학술근거.md` 작성:
-- Jacobs (1961) 도시활력 이론
-- 조월·이수기 (2021) "서울시 POI 빅데이터를 활용한 도시활력과 영향요인 분석" (KCI)
-- 15분 도시 패러다임 + Liveability Index
-- POI 밀도 + 다양성 + 생활인구 3차원 측정 방식
-- v5 적용 시 5개 vibe별 측정 지표 표
+**목적**: "우리가 이렇게 정했다"가 아닌 "이 자료에서 이렇게 측정했기 때문" 이라고 발표에서 말할 수 있게 하는 것.
+
+**진행 방식**:
+1. 웹 검색으로 공신력 있는 자료 수집
+   - 학술 논문 (KCI, arXiv, Google Scholar)
+   - 공공기관 보고서 (서울연구원, 국토연구원 등)
+   - 참고 키워드: Jacobs 도시활력, 서울시 POI 빅데이터, 15분 도시, Liveability Index, 생활인구
+2. 찾은 자료에서 vibe 5개 카테고리(번화함/조용함/청년활기/가족친화/자연친화) 측정 지표를 뒷받침하는 내용 추출
+3. `vibe_학술근거.md` 작성
+   - 각 vibe별: 측정 지표 + 근거 자료 출처 + 왜 이 지표인지 한 줄 설명
+   - v5 적용 시 사용할 실제 측정 방식 표로 정리
 
 ### Phase 6: Streamlit + 챗봇 개발
 

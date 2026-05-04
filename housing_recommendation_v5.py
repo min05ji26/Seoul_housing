@@ -271,14 +271,34 @@ def geocode_address_kakao(address, kakao_local_key):
 # =========================================================
 # 8. 카카오모빌리티 자차 경로
 # =========================================================
-def get_drive_route_kakaomobility(ox, oy, dx, dy, key):
+def _next_weekday_at(hour: int, minute: int) -> str:
+    """주어진 시각 기준 다음 평일 출발 시각을 YYYYMMDDHHMM 형식으로 반환 (future/directions용)"""
+    now = datetime.datetime.now()
+    candidate = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if candidate <= now or now.weekday() >= 5:
+        candidate += datetime.timedelta(days=1)
+    while candidate.weekday() >= 5:
+        candidate += datetime.timedelta(days=1)
+    return candidate.strftime("%Y%m%d%H%M")
+
+
+def get_drive_route_kakaomobility(ox, oy, dx, dy, key, departure_time: str = None):
     require_key("KAKAO_MOBILITY_REST_API_KEY", key)
+    if departure_time:
+        endpoint = "https://apis-navi.kakaomobility.com/v1/future/directions"
+        params = {"origin": f"{ox},{oy}", "destination": f"{dx},{dy}",
+                  "priority": "TIME", "summary": "true",
+                  "alternatives": "false", "road_details": "false",
+                  "departure_time": departure_time}
+    else:
+        endpoint = "https://apis-navi.kakaomobility.com/v1/directions"
+        params = {"origin": f"{ox},{oy}", "destination": f"{dx},{dy}",
+                  "priority": "TIME", "summary": "true",
+                  "alternatives": "false", "road_details": "false"}
     resp = requests.get(
-        "https://apis-navi.kakaomobility.com/v1/directions",
+        endpoint,
         headers={"Authorization": f"KakaoAK {key}", "Content-Type": "application/json"},
-        params={"origin": f"{ox},{oy}", "destination": f"{dx},{dy}",
-                "priority": "TIME", "summary": "true",
-                "alternatives": "false", "road_details": "false"},
+        params=params,
         timeout=REQUEST_TIMEOUT,
     )
     if resp.status_code != 200:
@@ -795,9 +815,12 @@ def calc_commute_both_ways(cand_x, cand_y, work_x, work_y,
     result = {}
 
     if transport_mode == "car":
-        # 출근: 집→직장 (Phase 3에서 future/directions API로 교체 예정)
+        am_dep = _next_weekday_at(depart_hour, depart_min)
+        pm_dep = _next_weekday_at(arrive_hour, arrive_min)
+
+        # 출근: 집→직장
         try:
-            am     = get_drive_route_kakaomobility(cand_x, cand_y, work_x, work_y, KAKAO_MOBILITY_REST_API_KEY)
+            am     = get_drive_route_kakaomobility(cand_x, cand_y, work_x, work_y, KAKAO_MOBILITY_REST_API_KEY, departure_time=am_dep)
             am_min = round(am["duration_sec"]/60, 2) if am["duration_sec"] else None
         except Exception as e:
             am_min = None; result["am_error"] = str(e)
@@ -805,7 +828,7 @@ def calc_commute_both_ways(cand_x, cand_y, work_x, work_y,
 
         # 퇴근: 직장→집
         try:
-            pm     = get_drive_route_kakaomobility(work_x, work_y, cand_x, cand_y, KAKAO_MOBILITY_REST_API_KEY)
+            pm     = get_drive_route_kakaomobility(work_x, work_y, cand_x, cand_y, KAKAO_MOBILITY_REST_API_KEY, departure_time=pm_dep)
             pm_min = round(pm["duration_sec"]/60, 2) if pm["duration_sec"] else None
         except Exception as e:
             pm_min = None; result["pm_error"] = str(e)
