@@ -520,7 +520,17 @@ def stage2_geocode_and_filter(molit_df, budget_manwon, kakao_local_key):
 def load_housing_data(csv_path):
     if not os.path.exists(csv_path):
         raise FileNotFoundError(f"주거비 CSV 없음: {csv_path}")
-    df = pd.read_csv(csv_path)
+    for enc in ["utf-8-sig", "cp949", "euc-kr"]:
+        try:
+            df = pd.read_csv(csv_path, encoding=enc)
+            break
+        except UnicodeDecodeError:
+            continue
+    else:
+        import io as _io
+        with open(csv_path, "rb") as _f:
+            _content = _f.read().decode("utf-8-sig", errors="replace")
+        df = pd.read_csv(_io.StringIO(_content))
     required = ["시도","시군구_2","읍면동","환산보증금(만원)","㎡당환산보증금_재계산(만원)"]
     missing  = [c for c in required if c not in df.columns]
     if missing: raise ValueError(f"CSV 필수 컬럼 없음: {missing}")
@@ -540,12 +550,7 @@ def estimate_commute_min(dist_km: float, transport_mode: str,
                           hour: int) -> float:
     speed = CAR_AVG_SPEED_KMH if transport_mode == "car" else TRANSIT_AVG_SPEED_KMH
     base  = dist_km * ROAD_CURVE_FACTOR / speed * 60
-    if transport_mode == "car":
-        coeff = get_car_coeff(hour)
-    else:
-        # 대중교통: 버스+지하철 혼합 가정 → 중간값
-        coeff = (get_bus_coeff(hour) + get_subway_coeff(hour)) / 2
-    return round(base * coeff, 1)
+    return round(base, 1)
 
 
 # =========================================================
@@ -1334,7 +1339,6 @@ def print_final_results(final_df, transport_mode,
     print("  [데이터 한계 안내]")
     print("    · 실거래가: 계약 완료 기준이며 현재 호가와 다를 수 있습니다.")
     print("    · 통근시간: 출발 시각 기준 추정값이며 ±10분 오차가 발생할 수 있습니다.")
-    print("    · 혼잡계수: TOPIS 통계 기반 추정값이며 실시간 교통 상황과 다를 수 있습니다.")
     print("    · 건물 좌표: 지번 기준 지오코딩이며 실제 출입구 위치와 다를 수 있습니다.")
     print("    · 인프라 거리: 카카오 반경 검색 기준이며 실제 도보 거리와 다를 수 있습니다.")
     print("    · 청년정책: API 시점 기준이며 정책 변경·마감 여부는 반드시 원문 확인 필요합니다.")
@@ -1592,9 +1596,12 @@ def run_recommendation(housing_csv_path, work_address, transport_mode,
     combined = combined.drop_duplicates(subset=["display_address"]).head(final_recommend_count)
     combined = combined.reset_index(drop=True)
 
-    combined["feature_tags"] = combined.apply(
-        lambda r: generate_feature_tags(r, combined), axis=1
-    )
+    if combined.empty:
+        combined["feature_tags"] = pd.Series(dtype=str)
+    else:
+        combined["feature_tags"] = combined.apply(
+            lambda r: generate_feature_tags(r, combined), axis=1
+        )
 
     return combined, seoul_avg_ppm
 
