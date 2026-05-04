@@ -1,0 +1,588 @@
+"""
+youth_policy_module.py
+──────────────────────
+온통청년 청년정책 API 연동 모듈 (v5.2)
+
+흐름:
+  1차) API 조회 + 기본 필터(나이/취업상태) → 후보 목록 표시
+  2차) 사용자가 관심 정책 선택
+  3차) 선택한 정책의 상세 조건 표시 → 사용자 충족 여부 확인
+  4차) 조건 충족된 정책만 점수 반영 + TOPSIS 4축 연결
+
+API: https://www.youthcenter.go.kr/go/ythip/getPlcy
+"""
+
+import os
+import re
+import time
+import requests
+from typing import Dict, List, Tuple
+from dotenv import load_dotenv
+load_dotenv()
+
+# ──────────────────────────────────────────────────────────
+# 설정
+# ──────────────────────────────────────────────────────────
+YOUTH_API_KEY = os.getenv("YOUTH_API_KEY", "")
+YOUTH_API_URL = "https://www.youthcenter.go.kr/go/ythip/getPlcy"
+REQUEST_TIMEOUT = 20
+SLEEP_BETWEEN   = 0.5
+
+# ──────────────────────────────────────────────────────────
+# 서울 구별 법정동코드 앞5자리
+# ──────────────────────────────────────────────────────────
+SEOUL_GU_ZIPCD: Dict[str, str] = {
+    "종로구": "11110", "중구": "11140", "용산구": "11170", "성동구": "11200",
+    "광진구": "11215", "동대문구": "11230", "중랑구": "11260", "성북구": "11290",
+    "강북구": "11305", "도봉구": "11320", "노원구": "11350", "은평구": "11380",
+    "서대문구": "11410", "마포구": "11440", "양천구": "11470", "강서구": "11500",
+    "구로구": "11530", "금천구": "11545", "영등포구": "11560", "동작구": "11590",
+    "관악구": "11620", "서초구": "11650", "강남구": "11680", "송파구": "11710",
+    "강동구": "11740",
+}
+SEOUL_PREFIX = "11"
+
+# ──────────────────────────────────────────────────────────
+# 상세조건 코드 → 한글 매핑
+# ──────────────────────────────────────────────────────────
+MARRIAGE_CODE = {
+    "0055001": "미혼", "0055002": "기혼", "0055003": "제한없음",
+}
+INCOME_CODE = {
+    "0043001": "제한없음", "0043002": "중위소득 이하", "0043003": "기초수급/차상위",
+}
+SCHOOL_CODE = {
+    "0049001": "고졸이하", "0049002": "대학재학", "0049003": "대졸",
+    "0049004": "석박사", "0049005": "제한없음",
+}
+
+# ──────────────────────────────────────────────────────────
+# 주거비 절감 패턴 테이블
+# ──────────────────────────────────────────────────────────
+BENEFIT_PATTERNS = [
+    (r"월\s*(\d+)\s*만\s*원\s*(지원|보조|지급)", "월세보조", None, "월 {amount}만원 주거비 지원"),
+    (r"보증금\s*(\d+)\s*만\s*원\s*(지원|보조|대출|무이자)", "보증금지원", None, "보증금 {amount}만원 지원/대출"),
+    (r"최대\s*(\d+)\s*만\s*원", "최대지원", None, "최대 {amount}만원 지원"),
+    (r"시세\s*(\d+)\s*%\s*(수준|이하|할인)", "시세할인", None, "시세 대비 {amount}% 수준 제공"),
+    (r"(\d+)\s*%\s*(할인|감면|인하)", "임대료할인", None, "{amount}% 임대료 할인"),
+    (r"공공임대|행복주택|매입임대|국민임대", "공공임대", 20, "공공임대주택 입주 자격 (시세 대비 약 60~80%)"),
+    (r"전세\s*자금\s*대출|전세대출|전세\s*보증금\s*대출", "전세대출", 8, "전세자금 대출 이자 지원 (월 약 8만원 절감 추정)"),
+    (r"월세\s*(지원|보조|바우처|보전)", "월세지원", 15, "월세 지원금 (월 약 15만원 추정)"),
+    (r"주거\s*(안정|지원)\s*(장려|바우처|금|수당)", "주거수당", 10, "주거안정 수당/바우처 (월 약 10만원 추정)"),
+    (r"이자\s*(지원|보전|감면|차액)", "이자지원", 5, "대출 이자 지원 (월 약 5만원 절감 추정)"),
+    (r"보증\s*보험\s*(지원|보조)", "보증보험", 3, "보증보험료 지원 (월 약 3만원 절감 추정)"),
+    (r"관리비\s*(지원|보조|감면)", "관리비지원", 5, "관리비 지원/감면 (월 약 5만원 절감 추정)"),
+    (r"취업\s*(지원금|성공|장려|수당)", "취업지원", 3, "취업 지원금 (간접 가계 부담 경감)"),
+    (r"교통비\s*(지원|보조)", "교통비지원", 3, "교통비 지원 (간접 주거비 부담 경감)"),
+]
+
+HOUSING_DIRECT_KEYWORDS = [
+    "주거", "임대", "전세", "월세", "보증금", "주택", "임차", "공공임대",
+    "행복주택", "청년주택", "매입임대", "전월세", "기숙사", "셰어하우스",
+    "주거안정", "주거비", "월세보조", "전세대출", "주거수당", "관리비",
+]
+
+
+# ──────────────────────────────────────────────────────────
+# 사용자 청년정보 입력 (1차 필터용)
+# ──────────────────────────────────────────────────────────
+def collect_youth_info() -> Dict[str, str]:
+    """청년정책 1차 필터링에 필요한 기본 정보 수집."""
+    print("\n" + "=" * 60)
+    print("  청년정책 맞춤 검색을 위한 기본 정보 입력")
+    print("  (비우면 전체 정책 조회)")
+    print("=" * 60)
+    info = {}
+    info["age"] = input("\n  만 나이 (숫자, 예: 만 26세 → 26, 비우면 건너뜀): ").strip()
+
+    print("  학력: 1=고졸이하  2=대학재학  3=대졸  4=석박사")
+    edu_map = {"1": "고졸이하", "2": "대학재학", "3": "대졸", "4": "석박사"}
+    info["education"] = edu_map.get(input("  선택 (비우면 전체): ").strip(), "")
+
+    print("  취업상태: 1=재직자  2=자영업자  3=미취업자  4=프리랜서  5=일경험없음")
+    emp_map = {"1": "재직자", "2": "자영업자", "3": "미취업자", "4": "프리랜서", "5": "일경험없음"}
+    info["employment"] = emp_map.get(input("  선택 (비우면 전체): ").strip(), "")
+
+    return info
+
+
+# ──────────────────────────────────────────────────────────
+# API 호출
+# ──────────────────────────────────────────────────────────
+def _call_youth_api(params: dict) -> List[dict]:
+    """온통청년 신규 API 호출 → 정책 리스트 반환."""
+    try:
+        resp = requests.get(YOUTH_API_URL, params=params, timeout=REQUEST_TIMEOUT)
+        if resp.status_code != 200:
+            print(f"  [온통청년 API 오류] HTTP {resp.status_code}")
+            return []
+        data = resp.json()
+        if data.get("resultCode") != 200:
+            print(f"  [온통청년 API] 코드 {data.get('resultCode')}: {data.get('resultMessage','')}")
+            return []
+        return data.get("result", {}).get("youthPolicyList", [])
+    except requests.exceptions.Timeout:
+        print("  [온통청년 API] 요청 시간 초과")
+        return []
+    except Exception as e:
+        print(f"  [온통청년 API 예외] {str(e)[:100]}")
+        return []
+
+
+def _fetch_all_policies(max_pages=5, page_size=50) -> List[dict]:
+    """여러 페이지 조회해서 전체 정책 목록 수집."""
+    all_p = []
+    for page in range(1, max_pages + 1):
+        params = {"apiKeyNm": YOUTH_API_KEY, "pageNum": page,
+                  "pageSize": page_size, "rtnType": "json"}
+        policies = _call_youth_api(params)
+        if not policies:
+            break
+        all_p.extend(policies)
+        if len(policies) < page_size:
+            break
+        time.sleep(SLEEP_BETWEEN)
+    return all_p
+
+
+# ──────────────────────────────────────────────────────────
+# 필터링 함수
+# ──────────────────────────────────────────────────────────
+def _extract_policy_text(p: dict) -> str:
+    fields = ["plcyNm", "plcyExplnCn", "plcySprtCn", "plcyKywdNm",
+              "lclsfNm", "mclsfNm", "addAplyQlfcCndCn", "etcMttrCn"]
+    return " ".join(str(p.get(f, "")) for f in fields)
+
+
+def _is_seoul_policy(p: dict, gu_name: str = "") -> bool:
+    zip_cd = str(p.get("zipCd", "")).strip()
+    spr = str(p.get("sprvsnInstCdNm", ""))
+    rgtr = str(p.get("rgtrHghrkInstCdNm", ""))
+    if not zip_cd:
+        return True
+    codes = [z.strip() for z in zip_cd.split(",")]
+    if gu_name:
+        gc = SEOUL_GU_ZIPCD.get(gu_name, "")
+        if gc and any(c.startswith(gc) for c in codes):
+            return True
+    if any(c.startswith(SEOUL_PREFIX) for c in codes):
+        return True
+    if "서울" in spr or "서울" in rgtr:
+        return True
+    return False
+
+
+def _is_housing_related(p: dict) -> bool:
+    text = _extract_policy_text(p)
+    if "주거" in str(p.get("lclsfNm", "")) or "주거" in str(p.get("mclsfNm", "")):
+        return True
+    return any(kw in text for kw in HOUSING_DIRECT_KEYWORDS)
+
+
+def _check_age(p: dict, user_age: str) -> bool:
+    if not user_age:
+        return True
+    try:
+        age = int(user_age)
+    except ValueError:
+        return True
+    min_a = str(p.get("sprtTrgtMinAge", "")).strip()
+    max_a = str(p.get("sprtTrgtMaxAge", "")).strip()
+    if not min_a and not max_a:
+        return True
+    try:
+        lo = int(min_a) if min_a else 0
+        hi = int(max_a) if max_a else 999
+        return lo <= age <= hi
+    except ValueError:
+        return True
+
+
+def _check_employment(p: dict, user_emp: str) -> bool:
+    if not user_emp:
+        return True
+    job_cd = str(p.get("jobCd", "")).strip()
+    if not job_cd:
+        return True
+    text = _extract_policy_text(p)
+    return user_emp in text or "전체" in text or "제한없음" in text
+
+
+# ──────────────────────────────────────────────────────────
+# 혜택 분석
+# ──────────────────────────────────────────────────────────
+def analyze_benefit(p: dict) -> dict:
+    text = _extract_policy_text(p)
+    is_housing = _is_housing_related(p)
+    best_saving, best_type, best_desc = 0.0, "", ""
+
+    for pattern, btype, default, tmpl in BENEFIT_PATTERNS:
+        m = re.search(pattern, text)
+        if not m:
+            continue
+        if m.lastindex and m.lastindex >= 1:
+            try:
+                amt = float(m.group(1))
+            except (ValueError, IndexError):
+                amt = 0
+            if btype == "월세보조":
+                sv, ds = amt, tmpl.format(amount=f"{amt:.0f}")
+            elif btype == "보증금지원":
+                sv = round(amt / 200, 1) if amt > 0 else 0
+                ds = tmpl.format(amount=f"{amt:.0f}") + f" (월 환산 약 {sv:.0f}만원 절감)"
+            elif btype == "최대지원":
+                sv = round(amt * 0.5 / 12, 1) if amt > 0 else 0
+                ds = tmpl.format(amount=f"{amt:.0f}") + f" (월 환산 약 {sv:.0f}만원 절감 추정)"
+            elif btype == "시세할인":
+                sv = round((100 - amt) / 100 * 50, 1) if amt < 100 else 0
+                ds = tmpl.format(amount=f"{amt:.0f}") + f" (월 약 {sv:.0f}만원 절감 추정)"
+            elif btype == "임대료할인":
+                sv = round(amt / 100 * 50, 1)
+                ds = tmpl.format(amount=f"{amt:.0f}") + f" (월 약 {sv:.0f}만원 절감 추정)"
+            else:
+                sv = default or 0
+                ds = tmpl.format(amount=f"{amt:.0f}")
+        else:
+            sv = default or 0
+            ds = tmpl
+        if sv > best_saving:
+            best_saving, best_type, best_desc = sv, btype, ds
+
+    if is_housing and best_saving == 0:
+        best_saving, best_type = 2.0, "주거관련"
+        best_desc = "주거 관련 정책 (구체적 절감액 미확인, 원문 확인 필요)"
+
+    return {
+        "is_housing": is_housing,
+        "benefit_type": best_type,
+        "monthly_saving": best_saving,
+        "benefit_desc": best_desc,
+        "saving_pct": round(best_saving / 50.0 * 100, 1) if best_saving > 0 else 0.0,
+    }
+
+
+# ──────────────────────────────────────────────────────────
+# 상세조건 표시 + 사용자 확인
+# ──────────────────────────────────────────────────────────
+def _format_detail_conditions(p: dict) -> List[str]:
+    """정책의 상세 조건을 사람이 읽을 수 있는 문장 리스트로 반환."""
+    conditions = []
+
+    # 나이
+    min_a = p.get("sprtTrgtMinAge", "")
+    max_a = p.get("sprtTrgtMaxAge", "")
+    if min_a or max_a:
+        conditions.append(f"나이: 만 {min_a}~{max_a}세")
+
+    # 혼인상태
+    mrg = MARRIAGE_CODE.get(str(p.get("mrgSttsCd", "")), "")
+    if mrg and mrg != "제한없음":
+        conditions.append(f"혼인상태: {mrg}")
+
+    # 소득조건
+    earn_cd = INCOME_CODE.get(str(p.get("earnCndSeCd", "")), "")
+    earn_min = p.get("earnMinAmt", "0")
+    earn_max = p.get("earnMaxAmt", "0")
+    if earn_cd and earn_cd != "제한없음":
+        conditions.append(f"소득조건: {earn_cd}")
+    elif str(earn_max) != "0" and earn_max:
+        conditions.append(f"소득: 최대 {earn_max}만원 이하")
+
+    # 학력
+    school = SCHOOL_CODE.get(str(p.get("schoolCd", "")), "")
+    if school and school != "제한없음":
+        conditions.append(f"학력: {school}")
+
+    # 추가 자격 조건 (텍스트)
+    add_cond = str(p.get("addAplyQlfcCndCn", "")).strip()
+    if add_cond and add_cond != "-":
+        # 너무 길면 축약
+        if len(add_cond) > 100:
+            add_cond = add_cond[:100] + "..."
+        conditions.append(f"추가조건: {add_cond}")
+
+    # 참여 대상
+    target = str(p.get("ptcpPrpTrgtCn", "")).strip()
+    if target and target != "-":
+        if len(target) > 100:
+            target = target[:100] + "..."
+        conditions.append(f"참여대상: {target}")
+
+    # 선착순 여부
+    if str(p.get("sprtArvlSeqYn", "")) == "Y":
+        cnt = p.get("sprtSclCnt", "")
+        cnt_str = f" ({cnt}명)" if cnt and str(cnt) != "0" else ""
+        conditions.append(f"선착순 모집{cnt_str}")
+
+    # 사업기간
+    bg = str(p.get("bizPrdBgngYmd", ""))
+    ed = str(p.get("bizPrdEndYmd", ""))
+    if bg and ed:
+        bg_fmt = f"{bg[:4]}.{bg[4:6]}.{bg[6:]}" if len(bg) == 8 else bg
+        ed_fmt = f"{ed[:4]}.{ed[4:6]}.{ed[6:]}" if len(ed) == 8 else ed
+        conditions.append(f"사업기간: {bg_fmt} ~ {ed_fmt}")
+
+    return conditions
+
+
+def verify_policy_with_user(p: dict, idx: int) -> bool:
+    """
+    선택한 정책의 상세 조건을 표시하고 사용자에게 충족 여부를 확인.
+
+    Returns: True(충족) / False(미충족)
+    """
+    name = p.get("plcyNm", "정책명 없음")
+    conditions = _format_detail_conditions(p)
+
+    print(f"\n    ── 정책 [{idx}] 상세 조건 확인 ──")
+    print(f"    정책명: {name}")
+
+    if not conditions:
+        print(f"    상세 조건: 별도 제한 없음")
+        return True
+
+    print(f"    상세 조건:")
+    for c in conditions:
+        print(f"      · {c}")
+
+    # 신청 URL
+    ref = p.get("refUrlAddr1", "") or p.get("aplyUrlAddr", "")
+    if ref:
+        print(f"    원문 확인: {ref}")
+
+    while True:
+        answer = input(f"    → 위 조건에 해당하십니까? (y=예 / n=아니요 / s=잘 모르겠음): ").strip().lower()
+        if answer == "y":
+            return True
+        elif answer == "n":
+            return False
+        elif answer == "s":
+            print(f"    → '잘 모르겠음' → 일단 포함하되 신뢰도 낮음으로 표시합니다.")
+            p["_uncertain"] = True
+            return True
+        print("    ※ y, n, s 중 하나를 입력해 주세요.")
+
+
+# ──────────────────────────────────────────────────────────
+# 메인 흐름: 1차 필터 → 사용자 선택 → 2차 확인 → 점수
+# ──────────────────────────────────────────────────────────
+def policy_selection_flow(all_policies: List[dict],
+                           user_info: Dict[str, str],
+                           gu_name: str = "",
+                           max_display: int = 3) -> Tuple[float, List[dict]]:
+    """
+    1차) 기본 필터(서울/나이/취업) + 주거 혜택 분석
+    2차) 후보 목록 표시 → 사용자 선택
+    3차) 상세 조건 확인
+    4차) 확인된 정책만 점수 반영
+
+    Returns: (점수 0~100, 확인된 정책 리스트)
+    """
+    # ── 1차 필터링 ──
+    candidates = []
+    for p in all_policies:
+        if not _is_seoul_policy(p, gu_name):
+            continue
+        if not _check_age(p, user_info.get("age", "")):
+            continue
+        if not _check_employment(p, user_info.get("employment", "")):
+            continue
+
+        benefit = analyze_benefit(p)
+        if benefit["monthly_saving"] > 0:
+            p["_monthly_saving"] = benefit["monthly_saving"]
+            p["_benefit_type"] = benefit["benefit_type"]
+            p["_benefit_desc"] = benefit["benefit_desc"]
+            p["_saving_pct"] = benefit["saving_pct"]
+            p["_is_housing"] = benefit["is_housing"]
+            p["_uncertain"] = False
+            candidates.append(p)
+
+    # 절감액 순 정렬 + 중복 제거
+    candidates.sort(key=lambda x: x["_monthly_saving"], reverse=True)
+    seen = set()
+    deduped = []
+    for p in candidates:
+        nm = p.get("plcyNm", "")
+        if nm and nm not in seen:
+            seen.add(nm)
+            deduped.append(p)
+    candidates = deduped
+
+    if not candidates:
+        print(f"\n  [{gu_name}] 주거비 절감에 도움되는 정책이 없습니다.")
+        return 0.0, []
+
+    # ── 2차: 후보 목록 표시 → 사용자 선택 ──
+    print(f"\n  [{gu_name}] 활용 가능한 청년정책 {len(candidates)}건 (1차 필터 통과)")
+    print(f"  ────────────────────────────────────────")
+
+    display_count = min(len(candidates), max(max_display + 2, 8))  # 선택지를 넉넉히 표시
+    for i, p in enumerate(candidates[:display_count], 1):
+        name = p.get("plcyNm", "")
+        saving = p["_monthly_saving"]
+        desc = p["_benefit_desc"]
+        icon = "🏠" if p["_is_housing"] else "💼"
+        org = p.get("sprvsnInstCdNm", "")
+        min_a = p.get("sprtTrgtMinAge", "")
+        max_a = p.get("sprtTrgtMaxAge", "")
+        age_str = f" (만 {min_a}~{max_a}세)" if min_a or max_a else ""
+
+        print(f"  {icon} [{i:>2}] {name}{age_str}")
+        print(f"        혜택: {desc}  |  월 약 {saving:.0f}만원 절감")
+        if org:
+            print(f"        주관: {org}")
+
+    if len(candidates) > display_count:
+        print(f"  ... 외 {len(candidates) - display_count}건")
+
+    print(f"\n  확인할 정책 번호를 선택하세요 (쉼표로 복수 선택 가능)")
+    print(f"  예) 1,2,3  또는  전체 확인하려면 'a'  또는  건너뛰려면 Enter")
+    sel_input = input(f"  선택: ").strip()
+
+    if not sel_input:
+        print(f"  → 건너뜀 (정책 점수 미반영)")
+        return 0.0, []
+
+    # 선택 번호 파싱
+    if sel_input.lower() == "a":
+        selected_indices = list(range(min(display_count, len(candidates))))
+    else:
+        selected_indices = []
+        for tok in sel_input.replace(" ", "").split(","):
+            if tok.isdigit():
+                idx = int(tok) - 1
+                if 0 <= idx < len(candidates):
+                    selected_indices.append(idx)
+
+    if not selected_indices:
+        print(f"  → 유효한 선택 없음 (정책 점수 미반영)")
+        return 0.0, []
+
+    # ── 3차: 선택한 정책별 상세 조건 확인 ──
+    print(f"\n  선택한 {len(selected_indices)}건의 정책에 대해 상세 조건을 확인합니다.")
+    verified = []
+
+    for idx in selected_indices:
+        p = candidates[idx]
+        if verify_policy_with_user(p, idx + 1):
+            verified.append(p)
+            status = "✅ 조건 충족" + (" (불확실)" if p.get("_uncertain") else "")
+            print(f"    → {status}")
+        else:
+            print(f"    → ❌ 조건 미충족 (점수 미반영)")
+
+    if not verified:
+        print(f"\n  조건을 충족하는 정책이 없습니다. (정책 점수 미반영)")
+        return 0.0, []
+
+    # ── 4차: 확인된 정책만으로 점수 계산 ──
+    # 상위 3개 월 절감액 합산 → 월세 50만원 대비 비율
+    top_savings = [p["_monthly_saving"] for p in verified[:3]]
+    total = sum(top_savings)
+    score = min(100.0, round(total / 50.0 * 100, 2))
+
+    # 불확실 정책이 포함된 경우 점수 30% 감소
+    uncertain_count = sum(1 for p in verified[:3] if p.get("_uncertain"))
+    if uncertain_count > 0:
+        penalty = 0.7 + 0.1 * (3 - uncertain_count)  # 1개 불확실=0.8, 2개=0.7, 3개=0.7
+        score = round(score * penalty, 2)
+
+    print(f"\n  ✅ 조건 확인 완료: {len(verified)}건 반영")
+    print(f"     정책 점수: {score:.0f}점 (월 약 {total:.0f}만원 절감 추정)")
+
+    return score, verified
+
+
+# ──────────────────────────────────────────────────────────
+# 구 단위 정책 조회 (run_recommendation에서 호출)
+# ──────────────────────────────────────────────────────────
+# 전역 캐시: 전체 정책은 1회만 조회
+_POLICY_CACHE: List[dict] = []
+
+
+def fetch_policies_for_gu(gu_name: str,
+                           user_info: Dict[str, str],
+                           max_display: int = 3) -> Tuple[float, List[dict]]:
+    """
+    추천된 주거지 구에 대한 청년정책 조회 + 선택 + 확인 + 점수.
+    전체 정책은 전역 캐시에서 재사용.
+    """
+    global _POLICY_CACHE
+
+    if not _POLICY_CACHE:
+        print(f"\n  [온통청년 API] 전체 정책 조회 중...")
+        _POLICY_CACHE = _fetch_all_policies(max_pages=5, page_size=50)
+        if _POLICY_CACHE:
+            print(f"  → 전체 {len(_POLICY_CACHE)}건 조회 완료")
+        else:
+            print(f"  → 정책 데이터 없음")
+            return 0.0, []
+
+    return policy_selection_flow(
+        _POLICY_CACHE, user_info, gu_name, max_display
+    )
+
+
+def reset_policy_cache():
+    """정책 캐시 초기화 (새 세션 시작 시)"""
+    global _POLICY_CACHE
+    _POLICY_CACHE = []
+
+
+# ──────────────────────────────────────────────────────────
+# 출력 함수 (최종 결과에서 호출)
+# ──────────────────────────────────────────────────────────
+def print_policy_section(gu_name: str, score: float,
+                          matched_policies: List[dict],
+                          max_display: int = 3,
+                          conv_deposit: float = None) -> None:
+    """추천 결과 내 [청년정책 혜택] 섹션 출력 — 이미 검증된 정책만."""
+    print("  [청년정책 혜택]")
+    if not matched_policies:
+        print("    · 조건 확인된 정책 없음")
+        return
+
+    top = matched_policies[:max_display]
+    top_savings = [p["_monthly_saving"] for p in top]
+    total_saving = sum(top_savings)
+
+    print(f"    · 정책 점수: {score:.0f}점 (조건 확인 완료, 최종 반영)")
+    print(f"    · 적용 정책 {len(top)}건:")
+
+    for idx, p in enumerate(top, 1):
+        name = p.get("plcyNm", "정책명 없음")
+        saving = p["_monthly_saving"]
+        desc = p["_benefit_desc"]
+        icon = "🏠" if p.get("_is_housing") else "💼"
+        uncertain = " ⚠불확실" if p.get("_uncertain") else ""
+
+        min_a = p.get("sprtTrgtMinAge", "")
+        max_a = p.get("sprtTrgtMaxAge", "")
+        age_str = f" (만 {min_a}~{max_a}세)" if min_a or max_a else ""
+
+        print(f"    {icon} [{idx}] {name}{age_str}{uncertain}")
+        print(f"         혜택: {desc}")
+        print(f"         월 절감: 약 {saving:.0f}만원")
+
+        ref = p.get("refUrlAddr1", "") or p.get("aplyUrlAddr", "")
+        if ref:
+            print(f"         상세: {ref}")
+
+    if total_saving > 0:
+        print(f"    ──────────────────────────────")
+        print(f"    · 예상 총 월 절감액: 약 {total_saving:.0f}만원")
+        if conv_deposit and conv_deposit > 0:
+            monthly_equiv = conv_deposit / 200
+            if monthly_equiv > 0:
+                pct = total_saving / monthly_equiv * 100
+                print(f"    · 이 매물 월 환산 주거비 대비 약 {pct:.0f}% 절감 가능")
+
+    remaining = len(matched_policies) - max_display
+    if remaining > 0:
+        print(f"    · ...외 {remaining}건의 추가 확인 정책이 있습니다.")
+
+
+def is_youth_api_configured() -> bool:
+    """API 키가 설정되었는지 확인"""
+    return bool(YOUTH_API_KEY) and not YOUTH_API_KEY.startswith("YOUR_")

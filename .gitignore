@@ -1,0 +1,24 @@
+# 환경변수 (API 키)
+.env
+
+# Claude Code 로컬 설정 (API 키 포함될 수 있음)
+.claude/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE
+.vscode/
+.idea/
+
+# 결과물
+api코드결과/
+*.log
+
+# 백업
+*_backup.py
+
+# 데이터 (용량 큼, 별도 관리)
+사용_csv_모음/
