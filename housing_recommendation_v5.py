@@ -239,6 +239,9 @@ def clean_work_address(addr: str) -> str:
     s = re.sub(r"\s*지하\s*\d+층?.*$", "", s).strip()   # "지하1층", "지하 2층"
     s = re.sub(r"\s*[Bb]\s*\d+층?.*$", "", s).strip()   # "B1층", "B 2"
     s = re.sub(r"\s*\d+층.*$", "", s).strip()            # "4층", "1층 우측"
+    # 숫자-한글+숫자+호 혼합 상세주소 제거 (예: 302-에이32호, 에이32호)
+    s = re.sub(r"\s*\d+\s*-\s*[가-힣]+\d*\s*호?.*$", "", s).strip()
+    s = re.sub(r"\s*[가-힣]+\d+\s*호.*$", "", s).strip()
     s = re.sub(r"\s*\d+호.*$", "", s).strip()            # "401호"
 
     # 방향 키워드 제거
@@ -267,6 +270,35 @@ def geocode_address_kakao(address, kakao_local_key):
                or safe_get(first_dict(safe_get(doc,"road_address",{})),"address_name")
                or address)
     return float(doc["x"]), float(doc["y"]), matched
+
+
+def geocode_address_kakao_with_fallback(address, kakao_local_key):
+    """
+    1차: clean_work_address 적용 후 시도
+    2차: 마지막 토큰 잘라가며 재시도 (최소 3토큰)
+    모두 실패 시 APIError raise
+    """
+    cleaned = clean_work_address(address)
+    # 1차 시도
+    try:
+        return geocode_address_kakao(cleaned, kakao_local_key)
+    except APIError:
+        pass
+    # 원본과 다르면 원본도 시도
+    if cleaned != address:
+        try:
+            return geocode_address_kakao(address, kakao_local_key)
+        except APIError:
+            pass
+    # 2차: 토큰 줄여가며 재시도
+    tokens = cleaned.split()
+    while len(tokens) >= 3:
+        tokens = tokens[:-1]
+        try:
+            return geocode_address_kakao(" ".join(tokens), kakao_local_key)
+        except APIError:
+            continue
+    raise APIError(f"[Kakao Local] 주소 변환 최종 실패: {address}")
 
 
 # =========================================================
@@ -1399,11 +1431,11 @@ def run_recommendation(housing_csv_path, work_address, transport_mode,
     reset_policy_cache()
 
 
-    # 직장 좌표 (층·호·방향 등 상세정보 제거 후 지오코딩)
+    # 직장 좌표 (층·호·방향 등 상세정보 제거 후 지오코딩, 실패 시 단계적 fallback)
     work_address_clean = clean_work_address(work_address)
     if work_address_clean != work_address:
         print(f"  [주소 정제] {work_address} → {work_address_clean}")
-    work_x, work_y, _ = geocode_address_kakao(work_address_clean, KAKAO_LOCAL_REST_API_KEY)
+    work_x, work_y, _ = geocode_address_kakao_with_fallback(work_address, KAKAO_LOCAL_REST_API_KEY)
 
     housing_df        = load_housing_data(housing_csv_path)
     seoul_avg_ppm     = float(housing_df["㎡당환산보증금_재계산(만원)"].mean())

@@ -107,7 +107,7 @@ async def recommend(req: RecommendRequest):
     v5_params = bot.get_v5_params()
 
     import glob as glob_mod
-    csv_files = sorted(glob_mod.glob(str(ROOT / "사용_csv_모음" / "*.csv")))
+    csv_files = sorted(glob_mod.glob(str(ROOT / "사용_csv_모음" / "*주거비*.csv")))
     if not csv_files:
         return JSONResponse(status_code=500, content={"error": "주거지 CSV 없음"})
 
@@ -178,16 +178,20 @@ def _quick_options_for(slot: Optional[str], bot: ChatBot) -> list:
             {"label": "통근 우선", "value": "① 통근 우선"},
             {"label": "주거비 우선", "value": "② 주거비 우선"},
             {"label": "균형", "value": "③ 균형"},
-            {"label": "알아서 해줘", "value": "④ 알아서 해줘"},
+            {"label": "직접 설정", "value": "④ 직접 설정"},
         ]
     # vibe 질문 중
-    if bot._asked_vibe and bot.slots.get("vibe") is None:
+    if bot._asked_vibe and bot.slots.get("vibe") is None and not bot._asked_policy:
         return [
-            {"label": "조용함", "value": "① 조용함"},
-            {"label": "번화함", "value": "② 번화함"},
-            {"label": "청년활기", "value": "③ 청년활기"},
+            {"label": "조용함",    "value": "① 조용함"},
+            {"label": "번화함",    "value": "② 번화함"},
+            {"label": "청년활기",  "value": "③ 청년활기"},
+            {"label": "가족친화",  "value": "④ 가족친화"},
+            {"label": "자연친화",  "value": "⑤ 자연친화"},
+            {"label": "편의 우선", "value": "⑥ 편의 우선"},
+            {"label": "운동·건강", "value": "⑦ 운동·건강"},
             {"label": "카페·문화", "value": "⑧ 카페·문화"},
-            {"label": "상관없음", "value": "⑨ 상관없음"},
+            {"label": "상관없음",  "value": "⑨ 상관없음"},
         ]
     # 청년정책 질문 중
     if bot._asked_policy and bot.slots.get("use_youth_policy") is None:

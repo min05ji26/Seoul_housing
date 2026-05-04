@@ -167,29 +167,53 @@ def _fallback_extraction(text: str) -> Dict:
         slots["rent_type"] = "월세"
 
     # 보증금/전세금 파싱
-    m = re.search(r"(\d+)\s*억\s*(\d+)?\s*천?\s*만?", text)
+    m = re.search(r"(\d+)\s*억\s*(\d+)\s*천", text)
     if m:
-        eok  = int(m.group(1)) * 10000
-        cheon = int(m.group(2)) * 1000 if m.group(2) else 0
-        slots["deposit_manwon"] = eok + cheon
+        slots["deposit_manwon"] = int(m.group(1)) * 10000 + int(m.group(2)) * 1000
     else:
         m = re.search(r"(\d+)\s*억", text)
         if m:
             slots["deposit_manwon"] = int(m.group(1)) * 10000
         else:
-            m = re.search(r"(\d{4,})\s*만원?", text)
+            m = re.search(r"(\d+)\s*천\s*만", text)
             if m:
-                slots["deposit_manwon"] = int(m.group(1))
+                slots["deposit_manwon"] = int(m.group(1)) * 1000
+            else:
+                m = re.search(r"(\d+)\s*천(?!\s*만)", text)
+                if m:
+                    slots["deposit_manwon"] = int(m.group(1)) * 1000
+                else:
+                    m = re.search(r"(\d+)\s*만원?", text)
+                    if m:
+                        slots["deposit_manwon"] = int(m.group(1))
 
     m = re.search(r"월세\s*(\d+)\s*만?", text)
     if m:
         slots["monthly_manwon"] = int(m.group(1))
 
-    m = re.search(r"(\d+)\s*분", text)
-    if m:
-        slots["allowed_minutes"] = int(m.group(1))
-    elif re.search(r"1시간", text):
-        slots["allowed_minutes"] = 60
+    _cm = None
+    _m = re.search(r"(\d+)\s*시간\s*(\d+)\s*분", text)
+    if _m:
+        _cm = int(_m.group(1)) * 60 + int(_m.group(2))
+    elif re.search(r"한\s*시간\s*반", text):
+        _cm = 90
+    elif re.search(r"(\d+)\s*시간\s*반", text):
+        _m2 = re.search(r"(\d+)\s*시간", text)
+        _cm = int(_m2.group(1)) * 60 + 30 if _m2 else None
+    elif re.search(r"(\d+(?:\.\d+)?)\s*시간", text):
+        _m2 = re.search(r"(\d+(?:\.\d+)?)\s*시간", text)
+        _cm = int(float(_m2.group(1)) * 60) if _m2 else None
+    elif re.search(r"한\s*시간", text):
+        _cm = 60
+    else:
+        _m = re.search(r"(\d+)\s*분", text)
+        if _m:
+            _cm = int(_m.group(1))
+    if _cm is not None:
+        if re.search(r"왕복", text):
+            _cm = _cm // 2
+        if 5 <= _cm <= 300:
+            slots["allowed_minutes"] = _cm
 
     gu = re.search(
         r"(강남|강동|강북|강서|관악|광진|구로|금천|노원|도봉|동대문|동작|마포|서대문|서초|성동|성북|송파|양천|영등포|용산|은평|종로|중구|중랑)구",
