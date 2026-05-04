@@ -32,6 +32,10 @@
   - `get_drive_route_kakaomobility()`: departure_time 파라미터 추가, future/directions 분기
   - `calc_commute_both_ways()`: 출근/퇴근 시각을 각각 departure_time으로 전달
   - **다음 작업: Phase 4 (자가용 시나리오 재검증)**
+- **Phase 4 완료**: 시나리오 1(대중교통) + 시나리오 2(자가용) 검증 이상 없음
+  - 자가용: 송파구 200개 매물, future/directions API 출근/퇴근 시각 별도 계산 정상
+  - 대중교통: ODsay 정상
+  - **다음 작업: Phase 5 (vibe 측정 근거 정리) — PC에서 진행 예정**
 
 ## API 키 설정 (신규 PC 작업 시 필수)
 
