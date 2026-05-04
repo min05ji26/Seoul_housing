@@ -22,6 +22,10 @@
 - **백업 생성**: `*_backup.py` 3개 (gitignore 제외)
 - **Git repo 신규 생성**: `https://github.com/kj77kj7/housing_recommendation.git`
 - **Phase 1 baseline 검증**: scenario1~4 정상 (데스크톱에서 2026-05-03 완료)
+- **Phase 2 완료**: 혼잡계수/CSV 5개 제거 (-222줄, 문법 검증 OK)
+  - 제거: 정적 파일 경로 5개, 혼잡계수 테이블 3개+함수 3개, CSV 로드 함수 5개, lookup 빌드 함수 5개, calculate_adjusted_transit_time 함수
+  - 단순화: calc_commute_both_ways (파라미터 5개 제거, ODsay pathTime 직접 사용)
+  - **다음 작업: Phase 2 최종 검증 (scenario1~4 사용자 직접 실행)**
 
 ## API 키 설정 (신규 PC 작업 시 필수)
 
