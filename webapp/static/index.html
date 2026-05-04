@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>서울살이 — 주거지 추천</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+<div id="app">
+
+  <!-- ══ 사이드바 ══════════════════════════════════════ -->
+  <nav id="sidebar">
+    <div class="sidebar-brand">
+      <div class="brand-icon">🏡</div>
+      <div class="brand-text">
+        <div class="brand-name">앱이름</div>
+        <div class="brand-sub">청년 주거 추천</div>
+      </div>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-label">메인</div>
+      <a class="nav-item active" href="#">
+        <span class="nav-left"><span class="nav-icon">💬</span> 챗봇으로 찾기</span>
+      </a>
+      <a class="nav-item disabled" href="#">
+        <span class="nav-left"><span class="nav-icon">🏠</span> 주거 추천</span>
+        <span class="nav-badge">3</span>
+      </a>
+      <a class="nav-item disabled" href="#">
+        <span class="nav-left"><span class="nav-icon">🗺️</span> 지도뷰</span>
+      </a>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-label">도구</div>
+      <a class="nav-item disabled" href="#">
+        <span class="nav-left"><span class="nav-icon">📋</span> 이사 체크리스트</span>
+        <span class="nav-pct">35%</span>
+      </a>
+      <a class="nav-item disabled" href="#">
+        <span class="nav-left"><span class="nav-icon">💰</span> 예상 생활비</span>
+      </a>
+    </div>
+
+    <div class="sidebar-section" id="current-conditions" style="display:none">
+      <div class="sidebar-label">현재 검색 조건</div>
+      <div id="condition-chips"></div>
+    </div>
+
+    <div class="sidebar-bottom">
+      <div class="sidebar-label">계정</div>
+      <a class="nav-item disabled" href="#"><span class="nav-left"><span class="nav-icon">👤</span> 내 정보</span></a>
+      <a class="nav-item disabled" href="#"><span class="nav-left"><span class="nav-icon">🔓</span> 로그아웃</span></a>
+      <div class="user-chip">
+        <div class="user-avatar">🐻</div>
+        <div>
+          <div class="user-name">소연님</div>
+          <div class="user-sub">강남구 직장인</div>
+        </div>
+      </div>
+    </div>
+  </nav>
+
+  <!-- ══ 채팅 영역 ══════════════════════════════════════ -->
+  <section id="chat-area">
+    <div id="chat-header">
+      <span id="chat-title">챗봇으로 찾기</span>
+      <button id="result-btn" onclick="scrollToResults()">추천 결과 보기 →</button>
+    </div>
+
+    <div id="messages"></div>
+
+    <div id="quick-options"></div>
+
+    <div id="input-area">
+      <textarea
+        id="user-input"
+        placeholder="메시지를 입력하세요..."
+        rows="1"
+      ></textarea>
+      <button id="send-btn" aria-label="전송">&#9658;</button>
+    </div>
+  </section>
+
+  <!-- ══ 우측 패널 ══════════════════════════════════════ -->
+  <aside id="right-panel">
+    <div id="panel-body">
+
+      <!-- 조건 입력 진행도 -->
+      <div>
+        <div class="panel-section-title">조건 입력 진행도</div>
+        <div id="progress-list"></div>
+      </div>
+
+      <!-- 입력된 조건 -->
+      <div>
+        <div class="panel-section-title">입력된 조건</div>
+        <div id="condition-table"></div>
+      </div>
+
+      <!-- 빠른 이동 -->
+      <div>
+        <div class="panel-section-title">빠른 이동</div>
+        <div class="quick-link"><span class="ql-icon">📋</span> 이사 체크리스트</div>
+        <div class="quick-link"><span class="ql-icon">💰</span> 예상 생활비</div>
+        <div class="quick-link"><span class="ql-icon">👤</span> 내 정보</div>
+      </div>
+
+      <!-- 추천 결과 -->
+      <div id="results-section" style="display:none">
+        <div class="panel-section-title">추천 결과</div>
+        <div id="results-list"></div>
+      </div>
+
+    </div>
+  </aside>
+
+</div>
+<script src="/static/app.js"></script>
+</body>
+</html>

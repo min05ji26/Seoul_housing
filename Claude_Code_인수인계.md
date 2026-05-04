@@ -1,21 +1,95 @@
 # Claude Code 인수인계 메모
-작성일: 2026-05-04 (최종 갱신)
+작성일: 2026-05-04 (최종 갱신: 2026-05-05)
 이전 환경: Claude.ai (서울살이 v5 프로젝트)
 다음 환경: Claude Code
 
 ---
 
-## 0. 즉시 해야 할 일 (Claude Code 첫 명령)
+## 0. 즉시 해야 할 일 (Claude Code 새 세션 시작 시)
 
-새 Claude Code 세션 시작 후 다음을 먼저 실행하라고 지시:
+다음 파일을 순서대로 읽고 시작:
 
-1. `Claude_Code_작업지시.md` 읽기 (워크플로우 + 작업 우선순위)
-2. 이 메모(`Claude_Code_인수인계.md`) 읽기
-3. `프로젝트_변경_계획.md` 읽기
-4. `housing_recommendation_v5.py` 읽기 (파일명 변경됨: `__1_` 없음)
-5. **다음 작업: Phase 2 (혼잡계수/CSV 5개 제거)** — §3 참고
+1. `Claude_Code_인수인계.md` (이 파일) — 전체 완료 이력
+2. `Claude_Code_인수인계_추가.md` — vibe 8개 카테고리, 챗봇 흐름 정의
+3. `vibe_매핑_설계.md` — vibe 모듈 설계 + 학술 근거
+4. `phase7_챗봇_웹앱_설계.md` — Phase 7 Step별 작업 지시서
 
-## [2026-05-04] 완료된 작업
+**현재 진행 중인 작업: Phase 7 Step 5~6** (HTML/CSS 디자인 반영 + 사용자 테스트)
+
+---
+
+## 완료된 Phase 전체 이력
+
+### Phase 1~4 (2026-05-03~04, 데스크탑→노트북→데스크탑)
+- **Phase 1**: Baseline 검증 완료 (시나리오 1~4 정상)
+- **Phase 2**: 혼잡계수 테이블 3개 + 정적 CSV 5개 로드 함수 제거 (-222줄), 시나리오1 재검증
+- **Phase 3**: 자가용 API → 카카오 future/directions 전환, `_next_weekday_at()` 헬퍼 추가
+- **Phase 4**: 시나리오1(대중교통) + 시나리오2(자가용) 재검증 완료
+- git 커밋: `585b983` (Phase 4 완료)
+
+### Phase 5 (2026-05-05, 데스크탑 복귀 후)
+- **vibe_module.py 신규 생성** — 8개 카테고리 × 7종 인프라 가중치 시스템
+  - `VIBE_RAW_SCORES`: 1~5 척도 (Jacobs 1961 + KCI 논문 + AHP-TOPSIS 참고)
+  - `normalize_weights()`: sum=7 정규화
+  - `get_vibe_weights(vibe_list)`: 다중 vibe 평균 가중치
+  - `extract_vibe_from_text(text)`: 키워드 매칭 폴백
+  - `apply_vibe_to_infra_scores(raw_scores, vibe_weights)`: 가중 평균
+- **housing_recommendation_v5.py 수정** — vibe 통합
+  - `from vibe_module import get_vibe_weights, apply_vibe_to_infra_scores` 추가
+  - `calc_infra_score()`: `vibe_weights=None` 파라미터 추가, 가중 평균 분기
+  - `run_recommendation()`: `vibe_list=None`, `chatbot_mode=False` 파라미터 추가
+- **vibe_매핑_설계.md 작성** — 설계 근거 및 학술 출처 정리
+
+### Phase 6 (2026-05-05, 데스크탑 복귀 후) — 청년정책 시스템 개선
+- **Phase 6-1~6-3**: nlp_input_module.py 구조 설계, vibe_module 완성
+- **Phase 6-4**: `youth_policy_module.py` 점수 산식 개편
+  - 정책 점수 = 월 절감액 합계 / 사용자 예산 × 100 (상한 100점)
+  - `analyze_benefit()` 신규: 혜택 유형 자동 분류 (월세지원/보증금/공공임대/기타)
+- **Phase 6-5**: 중복 수혜 경고 추가
+  - `detect_dup_limit(p)`: 지원 내용에 "중복 불가" 키워드 탐지
+  - 확인된 정책 중 중복 가능성 있으면 경고 출력
+- **Phase 6-6**: `print_policy_section()` 개편
+  - ★ 신뢰도 표시 (확실/불확실), URL 출력, 자동매칭 라벨
+- **_TEST_MODE / MOCK_POLICIES 추가**
+  - `_TEST_MODE = False` (True 시 API 호출 없이 mock 3건으로 동작)
+  - `MOCK_POLICIES`: 서울시 청년 월세지원 / 마포구 보증금 / 행복주택 3건
+  - `auto_confirm=False` 파라미터: True 시 input() 없이 자동 선택 (챗봇 모드)
+- **test_v5_auto.py 수정**: `_TEST_MODE = True` 설정으로 API 호출 없이 시나리오3 검증
+- **검증 완료**: 시나리오3 (청년정책 포함) — 6-4 점수/6-5 중복경고/6-6 섹션 출력 모두 정상
+
+### Phase 7 (2026-05-05, 데스크탑 복귀 후) — 챗봇 + 웹앱 통합
+- **Step 1 완료**: vibe → v5 인프라 점수 가중치 실제 연결 확인
+- **Step 2 완료**: `llm_module.py` 신규 생성
+  - Gemini 2.5 Flash-Lite (`gemini-2.5-flash-lite`) 슬롯 추출
+  - `google.genai` 패키지 사용 (`google.generativeai` deprecated → 교체 완료)
+  - 폴백 5종 시나리오 구현 (API 키 없음 / 네트워크 오류 / JSON 파싱 실패 / 일일한도 / 분당한도)
+  - `prompts/slot_extraction.txt` 외부 프롬프트 파일 분리
+- **Step 3 완료**: `nlp_input_module.py` 신규 생성
+  - `ChatBot` 클래스: 슬롯 수집 상태머신 (MAX_TURNS=25)
+  - 필수 슬롯 7개: work_address / transport_mode / rent_type / deposit_manwon / allowed_minutes / house_type / weight_preference
+  - LLM 추출 → 컨텍스트 인식 폴백 (봇이 물어본 슬롯 기억 후 직접 할당)
+  - vibe / use_youth_policy 선택 슬롯 처리
+  - `get_v5_params()`: 슬롯 → run_recommendation() kwargs 변환
+- **Step 4 완료**: `webapp/` FastAPI 백엔드
+  - `webapp/main.py`: `/api/chat`, `/api/recommend`, `/api/health` 엔드포인트
+  - `webapp/run.py`: `python -m webapp.run` → http://localhost:8000
+  - 세션 관리: UUID 기반 인메모리 (프로세스 재시작 시 초기화)
+- **Step 5 진행 중**: HTML + Vanilla JS 프론트엔드
+  - `webapp/static/index.html`, `style.css`, `app.js`
+  - 피그마 디자인 반영 (챗봇 말풍선 / 빠른 옵션 / 우측 진행도 패널)
+  - 사이드바 비활성 메뉴는 "준비 중" 처리
+- **버그 수정**: Gemini 모델명 오류(`gemini-2.5-flash-lite-preview-06-17` → `gemini-2.5-flash-lite`)
+
+---
+
+## API 키 설정 (신규 PC 작업 시 필수)
+
+- `.env` 파일은 Git에 없음 (보안상 제외)
+- 새 PC에서 작업 시작 시: `.env` 파일을 별도로 받아서 프로젝트 루트에 위치
+- `.env.example` 파일에 키 목록 있음 (값은 비워져 있음)
+- **현재 키 목록**: KAKAO_LOCAL_REST_API_KEY / KAKAO_MOBILITY_REST_API_KEY / ODSAY_API_KEY / MOLIT_API_KEY / YOUTH_API_KEY / SEOUL_JOB_API_KEY / **GEMINI_API_KEY** (Phase 7에서 추가)
+
+## [2026-05-04] 완료된 작업 (Phase 1~4 상세)
 
 - **환경변수 분리 완료**: API 키 6개 → `.env` 파일로 분리 (Git 제외)
 - **노트북 경로 교체 완료**: `kj77k` → `JangKyoungJun` (housing_recommendation_v5.py, feedback_module.py)
@@ -31,11 +105,9 @@
   - `_next_weekday_at()` 헬퍼 추가 (출발 시각 → YYYYMMDDHHMM 변환)
   - `get_drive_route_kakaomobility()`: departure_time 파라미터 추가, future/directions 분기
   - `calc_commute_both_ways()`: 출근/퇴근 시각을 각각 departure_time으로 전달
-  - **다음 작업: Phase 4 (자가용 시나리오 재검증)**
 - **Phase 4 완료**: 시나리오 1(대중교통) + 시나리오 2(자가용) 검증 이상 없음
   - 자가용: 송파구 200개 매물, future/directions API 출근/퇴근 시각 별도 계산 정상
   - 대중교통: ODsay 정상
-  - **다음 작업: Phase 5 (vibe 측정 근거 정리) — PC에서 진행 예정**
 
 ## API 키 설정 (신규 PC 작업 시 필수)
 

@@ -1,0 +1,397 @@
+/* ── 디자인 토큰 ─────────────────────────────────────── */
+:root {
+  --green:        #22c55e;
+  --green-dark:   #16a34a;
+  --green-light:  #dcfce7;
+  --green-user:   #4ade80;
+  --bg:           #f5f5f5;
+  --bg-card:      #ffffff;
+  --fg:           #0a0a0a;
+  --fg-secondary: #71717a;
+  --border:       #e4e4e7;
+  --shadow-sm:    0 1px 4px rgba(0,0,0,.08);
+  --shadow-md:    0 2px 10px rgba(0,0,0,.10);
+  --sidebar-w:    200px;
+  --panel-w:      280px;
+  --font:         -apple-system, BlinkMacSystemFont, "Pretendard", "Segoe UI", sans-serif;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; font-family: var(--font); background: var(--bg); color: var(--fg); }
+
+/* ── 전체 레이아웃 ──────────────────────────────────── */
+#app {
+  display: grid;
+  grid-template-columns: var(--sidebar-w) 1fr var(--panel-w);
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ══════════════════════════════════════════════════════
+   사이드바
+══════════════════════════════════════════════════════ */
+#sidebar {
+  background: var(--bg-card);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 18px 16px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.brand-icon {
+  width: 36px; height: 36px;
+  background: var(--green-light);
+  border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.1rem;
+}
+.brand-text { line-height: 1.2; }
+.brand-name { font-weight: 700; font-size: 0.88rem; }
+.brand-sub  { font-size: 0.72rem; color: var(--fg-secondary); }
+
+.sidebar-section { padding: 10px 10px 0; }
+.sidebar-label {
+  font-size: 0.7rem;
+  color: var(--fg-secondary);
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  padding: 8px 6px 4px;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--fg-secondary);
+  font-size: 0.85rem;
+  text-decoration: none;
+  transition: background 0.12s;
+}
+.nav-item:hover                { background: var(--bg); }
+.nav-item.active               { background: var(--green-light); color: var(--green-dark); font-weight: 600; }
+.nav-item.disabled             { opacity: .45; pointer-events: none; }
+.nav-left  { display: flex; align-items: center; gap: 8px; }
+.nav-icon  { font-size: 0.95rem; }
+.nav-badge { background: var(--green); color: white; border-radius: 10px; font-size: 0.68rem; font-weight: 700; padding: 1px 6px; }
+.nav-pct   { font-size: 0.72rem; color: var(--fg-secondary); }
+
+/* 현재 검색 조건 */
+.search-condition {
+  padding: 4px 10px;
+  font-size: 0.78rem;
+  color: var(--fg-secondary);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.search-condition .dot { font-size: 0.7rem; }
+
+.sidebar-bottom {
+  margin-top: auto;
+  border-top: 1px solid var(--border);
+  padding: 10px;
+}
+.user-chip {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px;
+}
+.user-avatar {
+  width: 32px; height: 32px;
+  background: #fde68a;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1rem;
+}
+.user-name { font-size: 0.82rem; font-weight: 600; }
+.user-sub  { font-size: 0.7rem; color: var(--fg-secondary); }
+
+/* ══════════════════════════════════════════════════════
+   채팅 영역
+══════════════════════════════════════════════════════ */
+#chat-area {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: var(--bg);
+}
+
+/* 상단 헤더 */
+#chat-header {
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--border);
+  padding: 16px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+#chat-title {
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+#result-btn {
+  background: var(--green);
+  color: white;
+  border: none;
+  border-radius: 20px;
+  padding: 8px 18px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s;
+  display: none;
+}
+#result-btn:hover { background: var(--green-dark); }
+#result-btn.visible { display: inline-block; }
+
+/* 메시지 스크롤 영역 */
+#messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* ── 말풍선 ─────────────────────────────────────────── */
+.msg-group {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 8px;
+}
+.msg-group.bot  { align-items: flex-start; }
+.msg-group.user { align-items: flex-end; }
+
+.bubble {
+  max-width: 68%;
+  padding: 12px 16px;
+  font-size: 0.88rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+.bubble.bot {
+  background: var(--bg-card);
+  border-radius: 4px 18px 18px 18px;
+  box-shadow: var(--shadow-sm);
+  color: var(--fg);
+}
+.bubble.user {
+  background: var(--green-user);
+  border-radius: 18px 18px 4px 18px;
+  color: #14532d;
+  font-weight: 500;
+}
+
+.msg-time {
+  font-size: 0.68rem;
+  color: var(--fg-secondary);
+  margin-top: 4px;
+  padding: 0 4px;
+}
+
+/* 타이핑 */
+.typing-dots { padding: 14px 18px; }
+.typing-dots span {
+  display: inline-block;
+  width: 7px; height: 7px;
+  background: #d1d5db;
+  border-radius: 50%;
+  margin: 0 2px;
+  animation: blink 1.2s infinite;
+}
+.typing-dots span:nth-child(2) { animation-delay: .2s; }
+.typing-dots span:nth-child(3) { animation-delay: .4s; }
+@keyframes blink { 0%,80%,100%{opacity:.2} 40%{opacity:1} }
+
+/* ── 빠른 옵션 ──────────────────────────────────────── */
+#quick-options {
+  padding: 4px 40px 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.quick-btn {
+  padding: 7px 18px;
+  border: 1.5px solid var(--green);
+  border-radius: 20px;
+  background: transparent;
+  color: var(--green-dark);
+  font-size: 0.83rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.quick-btn:hover { background: var(--green); color: white; }
+
+/* ── 입력창 ─────────────────────────────────────────── */
+#input-area {
+  padding: 12px 24px 16px;
+  background: var(--bg-card);
+  border-top: 1px solid var(--border);
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+}
+#user-input {
+  flex: 1;
+  border: 1.5px solid var(--border);
+  border-radius: 24px;
+  padding: 10px 18px;
+  font-size: 0.88rem;
+  font-family: var(--font);
+  resize: none;
+  outline: none;
+  line-height: 1.5;
+  max-height: 100px;
+  background: var(--bg);
+}
+#user-input:focus { border-color: var(--green); background: white; }
+#user-input::placeholder { color: #a1a1aa; }
+#send-btn {
+  width: 42px; height: 42px;
+  border-radius: 50%;
+  background: var(--green);
+  border: none;
+  cursor: pointer;
+  color: white;
+  font-size: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.12s;
+}
+#send-btn:hover    { background: var(--green-dark); }
+#send-btn:disabled { background: #d1d5db; cursor: not-allowed; }
+
+/* ══════════════════════════════════════════════════════
+   우측 패널
+══════════════════════════════════════════════════════ */
+#right-panel {
+  border-left: 1px solid var(--border);
+  background: var(--bg-card);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+#panel-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* 섹션 제목 */
+.panel-section-title {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--fg);
+  margin-bottom: 10px;
+}
+
+/* 조건 진행도 */
+.progress-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  font-size: 0.83rem;
+}
+.prog-badge {
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.72rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.prog-badge.done    { background: var(--green); color: white; }
+.prog-badge.current { background: #fbbf24; color: white; }
+.prog-badge.pending { background: #e4e4e7; color: #a1a1aa; }
+.prog-label { color: var(--fg); }
+.prog-label.done    { color: var(--fg-secondary); }
+.prog-label.pending { color: #a1a1aa; }
+.prog-value {
+  margin-left: auto;
+  font-size: 0.75rem;
+  color: var(--green-dark);
+  font-weight: 600;
+  max-width: 90px;
+  text-align: right;
+}
+
+/* 입력된 조건 */
+.condition-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 0;
+  border-bottom: 1px solid #f4f4f5;
+  font-size: 0.82rem;
+}
+.cond-label { color: var(--fg-secondary); }
+.cond-val   { font-weight: 700; color: var(--fg); text-align: right; }
+.cond-empty { color: #d1d5db; font-weight: 400; }
+
+/* 빠른 이동 */
+.quick-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+  font-size: 0.83rem;
+  color: var(--fg-secondary);
+  transition: background 0.12s;
+  margin-bottom: 6px;
+}
+.quick-link:hover { background: var(--bg); }
+.quick-link .ql-icon { font-size: 1rem; }
+
+/* 추천 결과 카드 */
+.result-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+  margin-bottom: 8px;
+  background: var(--bg);
+}
+.result-rank { font-size: 0.72rem; color: var(--green-dark); font-weight: 700; margin-bottom: 3px; }
+.result-loc  { font-weight: 700; font-size: 0.88rem; margin-bottom: 6px; }
+.result-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+.result-tag  { background: white; border: 1px solid var(--border); border-radius: 4px; padding: 2px 7px; font-size: 0.75rem; color: var(--fg-secondary); }
+
+.spinner {
+  display: inline-block;
+  width: 16px; height: 16px;
+  border: 2px solid #e4e4e7;
+  border-top-color: var(--green);
+  border-radius: 50%;
+  animation: spin .8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── 모바일 ─────────────────────────────────────────── */
+@media (max-width: 768px) {
+  #app { grid-template-columns: 1fr; }
+  #sidebar, #right-panel { display: none; }
+  #messages { padding: 16px; }
+  #quick-options { padding: 4px 16px 8px; }
+  #input-area { padding: 10px 16px 12px; }
+}
