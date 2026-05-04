@@ -17,14 +17,15 @@ from youth_policy_module import (
     reset_policy_cache,
 )
 from feedback_module import collect_feedback, print_feedback_summary, get_feedback_count
+from vibe_module import get_vibe_weights, apply_vibe_to_infra_scores
 
 
 # =========================================================
 # 1. 파일 경로
 # =========================================================
-_DATA_DIR = r"C:\Users\JangKyoungJun\Downloads\서울살이_프로젝트\사용_csv_모음"
+_DATA_DIR = r"C:\Users\kj77k\Downloads\서울살이_프로젝트\사용_csv_모음"
 HOUSING_CSV_PATH = os.path.join(_DATA_DIR, "주거비_데이터_최종통합버전.csv")
-SAVE_DIR  = r"C:\Users\JangKyoungJun\Downloads\서울살이_프로젝트\api코드결과"
+SAVE_DIR  = r"C:\Users\kj77k\Downloads\서울살이_프로젝트\api코드결과"
 SAVE_PATH = os.path.join(SAVE_DIR, "integrated_recommendation_result_v5.csv")
 
 
@@ -972,7 +973,7 @@ def _distance_to_score(dist_m):
     return 0
 
 
-def calc_infra_score(x, y, required_infra, kakao_key):
+def calc_infra_score(x, y, required_infra, kakao_key, vibe_weights=None):
     """
     매물 좌표(x, y)에서 필수 편의시설 반경 조회.
 
@@ -1007,8 +1008,12 @@ def calc_infra_score(x, y, required_infra, kakao_key):
             fail.append(name)
         time.sleep(SLEEP_BETWEEN_CALLS)
 
-    scores = [s for (_, s) in detail.values()]
-    avg    = round(sum(scores) / len(scores), 2) if scores else 0
+    if vibe_weights:
+        raw_scores = {name: s for name, (_, s) in detail.items()}
+        avg = apply_vibe_to_infra_scores(raw_scores, vibe_weights)
+    else:
+        scores = [s for (_, s) in detail.values()]
+        avg    = round(sum(scores) / len(scores), 2) if scores else 0
 
     return {
         "infra_score":  avg,
@@ -1166,7 +1171,7 @@ def print_final_results(final_df, transport_mode,
                          seoul_avg_ppm=None, weight_commute=0.5, weight_housing=0.5,
                          weight_infra=0.0, allowed_commute_min=90,
                          user_info=None, weight_policy=0.0,
-                         max_policy_display=3):
+                         max_policy_display=3, monthly_rent_manwon=50.0):
     print("\n" + "="*70)
     print(" 최종 주거지 추천 결과  (v5 — TOPSIS 점수 기준)")
     infra_str = f" + 인프라 {weight_infra*100:.0f}%" if weight_infra > 0 else ""
@@ -1352,7 +1357,9 @@ def print_final_results(final_df, transport_mode,
             print_policy_section(gu_for_policy, policy_score,
                                   policy_list if isinstance(policy_list, list) else [],
                                   max_display=max_policy_display,
-                                  conv_deposit=conv_dep)
+                                  conv_deposit=conv_dep,
+                                  user_info=user_info,
+                                  user_budget_monthly=monthly_rent_manwon)
         elif user_info and is_youth_api_configured():
             print("  [청년정책 혜택]")
             print("    · 이 지역에서 주거비 절감에 도움되는 정책이 없습니다.")
@@ -1380,7 +1387,10 @@ def run_recommendation(housing_csv_path, work_address, transport_mode,
                         weight_commute=0.5, weight_housing=0.5,
                         required_infra=None, weight_infra=0.0,
                         user_info=None, weight_policy=0.0,
-                        max_policy_display=3):
+                        max_policy_display=3,
+                        monthly_rent_manwon=50.0,
+                        chatbot_mode=False,
+                        vibe_list=None):
 
     if transport_mode not in ("car","transit"):
         raise ValueError("이동수단은 'car' 또는 'transit'")
@@ -1498,9 +1508,11 @@ def run_recommendation(housing_csv_path, work_address, transport_mode,
 
             # 생활 인프라 점수 계산 (필수 편의시설 선택 시)
             if required_infra:
+                _vibe_w = get_vibe_weights(vibe_list) if vibe_list else None
                 infra = calc_infra_score(
                     float(mrow["cand_x"]), float(mrow["cand_y"]),
-                    required_infra, KAKAO_LOCAL_REST_API_KEY
+                    required_infra, KAKAO_LOCAL_REST_API_KEY,
+                    vibe_weights=_vibe_w,
                 )
                 base["infra_score"]  = infra["infra_score"]
                 base["infra_detail"] = infra["infra_detail"]
@@ -1574,7 +1586,7 @@ def run_recommendation(housing_csv_path, work_address, transport_mode,
                     continue
                 if gu not in policy_cache:
                     try:
-                        ps, pm = fetch_policies_for_gu(gu, user_info, max_policy_display)
+                        ps, pm = fetch_policies_for_gu(gu, user_info, max_policy_display, monthly_rent_manwon, auto_confirm=chatbot_mode)
                         policy_cache[gu] = (ps, pm)
                     except Exception as e:
                         print(f"  [청년정책 오류] {gu}: {str(e)[:80]}")
@@ -1715,6 +1727,7 @@ def main():
         print("  ※ '전세' 또는 '월세'를 입력해 주세요.")
 
     budget_manwon = None
+    monthly_rent_budget = 50.0  # 청년정책 점수 기준 (사용자 예산 대비 비율)
     if rent_type_input == "전세":
         v = input("   전세금 (만원, 비우면 무제한): ").strip()
         budget_manwon = parse_opt_float(v)
@@ -1725,6 +1738,7 @@ def main():
         rent_val = parse_opt_float(rent_v)
         if rent_val is not None:
             budget_manwon = dep_val + rent_val * 200
+            monthly_rent_budget = rent_val
             print(f"   → 환산보증금 기준: {dep_val:.0f} + {rent_val:.0f}×200 = {budget_manwon:,.0f}만원 이하")
 
     allowed_input = input("4. 허용 통근시간 분 (비우면 90분): ").strip() or "90"
@@ -1908,17 +1922,19 @@ def main():
         user_info             = user_info,
         weight_policy         = weight_policy,
         max_policy_display    = max_policy_display,
+        monthly_rent_manwon   = monthly_rent_budget,
     )
 
     print_final_results(
         final_df, transport_mode,
         depart_h, depart_m, arrive_h, arrive_m,
         seoul_avg_ppm, weight_commute, weight_housing,
-        weight_infra        = weight_infra,
-        allowed_commute_min = int(allowed_input),
-        user_info           = user_info,
-        weight_policy       = weight_policy,
-        max_policy_display  = max_policy_display,
+        weight_infra         = weight_infra,
+        allowed_commute_min  = int(allowed_input),
+        user_info            = user_info,
+        weight_policy        = weight_policy,
+        max_policy_display   = max_policy_display,
+        monthly_rent_manwon  = monthly_rent_budget,
     )
 
     saved = save_csv_safely(final_df, SAVE_PATH)

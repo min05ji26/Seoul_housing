@@ -32,7 +32,7 @@ from typing import Optional
 # ──────────────────────────────────────────────────────────
 # 설정
 # ──────────────────────────────────────────────────────────
-FEEDBACK_CSV_DIR = r"C:\Users\JangKyoungJun\Downloads\서울살이_프로젝트\api코드결과"
+FEEDBACK_CSV_DIR = r"C:\Users\kj77k\Downloads\서울살이_프로젝트\api코드결과"
 FEEDBACK_CSV_NAME = "recommendation_feedback.csv"
 
 FEEDBACK_COLUMNS = [
