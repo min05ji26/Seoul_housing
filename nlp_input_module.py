@@ -48,8 +48,10 @@ def _parse_commute_minutes(txt: str) -> Optional[int]:
     elif re.search(r"(\d+)\s*분", txt):
         m2 = re.search(r"(\d+)\s*분", txt)
         minutes = int(m2.group(1)) if m2 else None
+    # 숫자만 입력 (예: "80" → 80분으로 처리)
     else:
-        return None
+        m2 = re.search(r"^\s*(\d+)\s*$", txt)
+        minutes = int(m2.group(1)) if m2 else None
 
     if minutes is None:
         return None
@@ -348,6 +350,15 @@ class ChatBot:
                 m = re.search(r"(\d+)", txt)
                 if m:
                     new_slots["monthly_manwon"] = int(m.group(1))
+
+        # LLM이 추출한 work_address도 검증 (역명·건물명 거부)
+        if new_slots.get("work_address") and self.slots.get("work_address") is None:
+            valid, err = self._validate_work_address(new_slots["work_address"])
+            if not valid:
+                new_slots.pop("work_address")
+                if not _addr_err:
+                    _addr_err = err
+                    self._last_asked_slot = "work_address"
 
         # 번호 선택 폴백 (LLM이 못 잡은 경우)
         missing = self._missing_required()

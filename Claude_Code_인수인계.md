@@ -166,6 +166,15 @@
 | 통근 시간 파싱 | `nlp_input_module.py`, `llm_module.py` | `_parse_commute_minutes()` 신규: 편도/왕복 구분, 1시간 30분, 한시간 반 등 처리. 비현실적 값(5분 미만, 300분 초과) 필터링 |
 | CSV 파일 선택 | `webapp/main.py` | glob 패턴 `*.csv` → `*주거비*.csv` (교통 관련 CSV 잘못 로드 방지) |
 
+**추천 결과·청년정책·주소 검증 버그 수정 (2026-05-05 2차)**
+
+| 수정 | 파일 | 내용 |
+|------|------|------|
+| 추천 결과 전부 0 | `webapp/main.py` `_df_to_list()` | 컬럼명 전면 수정: `topsis_score`→`final_score`, `예상_통근시간(분)`→`commute_time_min`, `환산보증금(만원)`→`conv_deposit_manwon`, `주택유형`→`housing_type`. stage2 fallback 컬럼도 OR 체인 처리 |
+| 청년정책 항상 테스트모드 | `webapp/main.py` | `youth_policy_module._TEST_MODE = True` 강제 설정 2곳 제거 (실제 API 호출 정상화) |
+| 역명 입력 시 재질문 안 됨 | `nlp_input_module.py` `process()` | LLM 추출 `work_address`도 머지 전 `_validate_work_address()` 검증. 무효 시 `new_slots`에서 제거 + `_last_asked_slot="work_address"` 유지 → 재질문 정상 동작 |
+| 통근시간 숫자만 입력 | `nlp_input_module.py` `_parse_commute_minutes()` | 순수 숫자 입력(`^\s*(\d+)\s*$`) → 분으로 처리하는 폴백 추가. "80" → 80분 인식. 5~300분 필터 동일 적용 |
+
 ---
 
 ## 3. 핵심 결정 사항

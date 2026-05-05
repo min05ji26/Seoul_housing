@@ -119,9 +119,6 @@ async def recommend(req: RecommendRequest):
     sys.stdout = log_buf
 
     try:
-        import youth_policy_module
-        youth_policy_module._TEST_MODE = True
-
         from housing_recommendation_v5 import run_recommendation
         final_df, seoul_avg = run_recommendation(
             housing_csv_path=csv_path,
@@ -138,8 +135,6 @@ async def recommend(req: RecommendRequest):
         return JSONResponse(status_code=500, content={"error": str(e)})
     finally:
         sys.stdout = old_stdout
-        import youth_policy_module
-        youth_policy_module._TEST_MODE = False
 
 
 # ──────────────────────────────────────────────────────────
@@ -149,13 +144,24 @@ async def recommend(req: RecommendRequest):
 def _df_to_list(df) -> list:
     rows = []
     for _, row in df.iterrows():
+        # stage3(MOLIT) 컬럼과 stage2 fallback(CSV) 컬럼 모두 대응
+        price = (row.get("conv_deposit_manwon")
+                 or row.get("median_deposit")
+                 or row.get("환산보증금(만원)")
+                 or 0)
+        commute = (row.get("commute_time_min")
+                   or row.get("예상_통근시간(분)")
+                   or 0)
+        score = (row.get("final_score")
+                 or row.get("topsis_score")
+                 or 0)
         rows.append({
-            "gu":          str(row.get("시군구_2", "")),
-            "dong":        str(row.get("읍면동", "")),
-            "house_type":  str(row.get("주택유형", "")),
-            "score":       round(float(row.get("topsis_score", 0)), 4),
-            "price_manwon": int(row.get("환산보증금(만원)", 0)),
-            "commute_min": int(row.get("예상_통근시간(분)", 0)),
+            "gu":          str(row.get("시군구_2") or row.get("gu") or ""),
+            "dong":        str(row.get("읍면동")   or row.get("dong") or ""),
+            "house_type":  str(row.get("housing_type") or row.get("주택유형") or ""),
+            "score":       round(float(score), 4),
+            "price_manwon": int(float(price)),
+            "commute_min": int(round(float(commute))),
             "infra_score": row.get("infra_score"),
             "policy_score": row.get("policy_score"),
         })
