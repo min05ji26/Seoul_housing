@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>회원가입 — 집찾봇</title>
+  <link rel="stylesheet" href="/static/auth.css" />
+</head>
+<body>
+<div class="auth-container" style="overflow-y:auto;">
+
+  <!-- 왼쪽 패널 -->
+  <div class="auth-left" style="position:sticky;top:0;height:100vh;">
+    <div class="auth-icon-box">🏠</div>
+    <h1 class="auth-app-title">집찾봇</h1>
+    <p class="auth-app-sub">서울시 공공데이터로 찾는</p>
+    <p class="auth-app-sub">나에게 딱 맞는 청년 주거지</p>
+    <div class="auth-badge">🏆 서울시 빅데이터 경진대회</div>
+    <div class="auth-feature-list">
+      <div class="auth-feature-item"><span>🤖</span><span>AI 챗봇 대화형 주거 추천</span></div>
+      <div class="auth-feature-item"><span>📊</span><span>TOPSIS 알고리즘 다기준 분석</span></div>
+      <div class="auth-feature-item"><span>🗺️</span><span>지도뷰 + 카드뷰 비교</span></div>
+      <div class="auth-feature-item"><span>💸</span><span>동네별 생활비 예측</span></div>
+    </div>
+  </div>
+
+  <!-- 오른쪽 패널 -->
+  <div class="auth-right" style="padding: 40px 20px;">
+    <div class="auth-card">
+      <h2 class="auth-title">처음 오셨군요 👋</h2>
+      <p class="auth-subtitle">계정을 만들고 맞춤 주거 추천을 받아보세요</p>
+
+      <button class="kakao-btn" onclick="handleKakao()">💬 카카오로 시작하기</button>
+
+      <div class="auth-divider">
+        <div class="auth-divider-line"></div>
+        <span class="auth-divider-text">또는 이메일로 가입</span>
+        <div class="auth-divider-line"></div>
+      </div>
+
+      <div id="error-msg" class="error-banner" style="display:none"></div>
+
+      <label class="auth-label">닉네임</label>
+      <input class="auth-input" id="nickname" placeholder="사용할 이름을 입력하세요" />
+
+      <label class="auth-label">이메일</label>
+      <input class="auth-input" id="email" type="email" placeholder="email@example.com" />
+
+      <label class="auth-label">비밀번호</label>
+      <input class="auth-input" id="password" type="password" placeholder="8자 이상 입력하세요" />
+
+      <label class="auth-label">비밀번호 확인</label>
+      <input class="auth-input" id="password2" type="password" placeholder="비밀번호를 다시 입력하세요" />
+
+      <label class="auth-label">생년월일</label>
+      <input class="auth-input" id="birth_date" type="date" />
+      <p class="auth-hint">※ 청년정책 자격 확인에 사용됩니다 (만 나이 자동 계산)</p>
+
+      <label class="auth-label">성별</label>
+      <div class="gender-group">
+        <button class="gender-btn" id="btn-M" onclick="selectGender('M')">남성</button>
+        <button class="gender-btn" id="btn-F" onclick="selectGender('F')">여성</button>
+      </div>
+
+      <button class="auth-btn" onclick="handleSignup()">회원가입</button>
+
+      <div class="auth-footer">
+        이미 계정이 있으신가요?
+        <a class="auth-footer-link" href="/login">로그인</a>
+      </div>
+      <div class="auth-auto">🔒 가입 시 이용약관 및 개인정보처리방침에 동의하게 됩니다</div>
+    </div>
+  </div>
+
+</div>
+<script>
+  let selectedGender = '';
+
+  function selectGender(g) {
+    selectedGender = g;
+    document.getElementById('btn-M').classList.toggle('selected', g === 'M');
+    document.getElementById('btn-F').classList.toggle('selected', g === 'F');
+  }
+
+  function handleKakao() {
+    window.location.href = '/auth/kakao';
+  }
+
+  async function handleSignup() {
+    const nickname   = document.getElementById('nickname').value.trim();
+    const email      = document.getElementById('email').value.trim();
+    const password   = document.getElementById('password').value;
+    const password2  = document.getElementById('password2').value;
+    const birth_date = document.getElementById('birth_date').value;
+    const errEl      = document.getElementById('error-msg');
+    errEl.style.display = 'none';
+
+    function showErr(msg) {
+      errEl.textContent = msg;
+      errEl.style.display = 'block';
+    }
+
+    if (!nickname)                   { showErr('닉네임을 입력해주세요'); return; }
+    if (!email || !email.includes('@')) { showErr('올바른 이메일 형식이 아닙니다'); return; }
+    if (password.length < 8)         { showErr('비밀번호는 8자 이상이어야 합니다'); return; }
+    if (password !== password2)      { showErr('비밀번호가 일치하지 않습니다'); return; }
+    if (!birth_date)                 { showErr('생년월일을 입력해주세요'); return; }
+    if (!selectedGender)             { showErr('성별을 선택해주세요'); return; }
+
+    try {
+      const res  = await fetch('/auth/signup', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ nickname, email, password, birth_date, gender: selectedGender }),
+      });
+      const data = await res.json();
+      if (data.access_token) {
+        localStorage.setItem('token',    data.access_token);
+        localStorage.setItem('nickname', data.nickname || nickname);
+        if (data.user_id) localStorage.setItem('user_id', data.user_id);
+        location.href = '/';
+      } else {
+        showErr(data.detail || '회원가입에 실패했습니다');
+      }
+    } catch (e) {
+      showErr('서버 연결 오류');
+    }
+  }
+</script>
+</body>
+</html>

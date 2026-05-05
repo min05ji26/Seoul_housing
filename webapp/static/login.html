@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>로그인 — 집찾봇</title>
+  <link rel="stylesheet" href="/static/auth.css" />
+</head>
+<body>
+<div class="auth-container">
+
+  <!-- 왼쪽 패널 -->
+  <div class="auth-left">
+    <div class="auth-icon-box">🏠</div>
+    <h1 class="auth-app-title">집찾봇</h1>
+    <p class="auth-app-sub">서울시 공공데이터로 찾는</p>
+    <p class="auth-app-sub">나에게 딱 맞는 청년 주거지</p>
+    <div class="auth-badge">🏆 서울시 빅데이터 경진대회</div>
+    <div class="auth-feature-list">
+      <div class="auth-feature-item"><span>🤖</span><span>AI 챗봇 대화형 주거 추천</span></div>
+      <div class="auth-feature-item"><span>📊</span><span>TOPSIS 알고리즘 다기준 분석</span></div>
+      <div class="auth-feature-item"><span>🗺️</span><span>지도뷰 + 카드뷰 비교</span></div>
+      <div class="auth-feature-item"><span>💸</span><span>동네별 생활비 예측</span></div>
+    </div>
+  </div>
+
+  <!-- 오른쪽 패널 -->
+  <div class="auth-right">
+    <div class="auth-card">
+      <h2 class="auth-title">다시 오셨군요 👋</h2>
+      <p class="auth-subtitle">계정에 로그인하여 맞춤 주거 추천을 받아보세요</p>
+
+      <button class="kakao-btn" onclick="handleKakao()">💬 카카오로 시작하기</button>
+
+      <div class="auth-divider">
+        <div class="auth-divider-line"></div>
+        <span class="auth-divider-text">또는 이메일로 로그인</span>
+        <div class="auth-divider-line"></div>
+      </div>
+
+      <div id="error-msg" class="error-banner" style="display:none"></div>
+
+      <label class="auth-label">이메일</label>
+      <input class="auth-input" id="email" type="email" placeholder="이메일을 입력하세요" />
+
+      <label class="auth-label">비밀번호</label>
+      <input class="auth-input" id="password" type="password" placeholder="비밀번호를 입력하세요"
+             onkeydown="if(event.key==='Enter') handleLogin()" />
+
+      <button class="auth-btn" onclick="handleLogin()">로그인</button>
+
+      <div class="auth-footer">
+        처음이신가요?
+        <a class="auth-footer-link" href="/signup">회원가입</a>
+        ·
+        <a class="auth-footer-link" href="/forgot-password">비밀번호 찾기</a>
+      </div>
+      <div class="auth-auto">🔒 최초 1회 로그인 후 자동 로그인이 유지됩니다</div>
+    </div>
+  </div>
+
+</div>
+<script>
+  // 이미 로그인된 경우 바로 이동
+  if (localStorage.getItem('token')) location.href = '/';
+
+  // 카카오 콜백에서 query 토큰을 받은 경우 처리
+  (function() {
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('token');
+    if (token) {
+      localStorage.setItem('token', token);
+      localStorage.setItem('nickname', params.get('nickname') || '');
+      localStorage.setItem('user_id', params.get('user_id') || '');
+      window.history.replaceState({}, '', '/');
+      location.href = '/';
+    }
+  })();
+
+  function handleKakao() {
+    window.location.href = '/auth/kakao';
+  }
+
+  async function handleLogin() {
+    const email    = document.getElementById('email').value.trim();
+    const password = document.getElementById('password').value;
+    const errEl    = document.getElementById('error-msg');
+    errEl.style.display = 'none';
+
+    if (!email || !password) {
+      errEl.textContent = '이메일과 비밀번호를 입력해주세요';
+      errEl.style.display = 'block';
+      return;
+    }
+
+    try {
+      const res  = await fetch('/auth/login', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ email, password }),
+      });
+      const data = await res.json();
+      if (data.access_token) {
+        localStorage.setItem('token',    data.access_token);
+        localStorage.setItem('nickname', data.nickname || '');
+        if (data.user_id) localStorage.setItem('user_id', data.user_id);
+        location.href = '/';
+      } else {
+        errEl.textContent = data.detail || '로그인에 실패했습니다';
+        errEl.style.display = 'block';
+      }
+    } catch (e) {
+      errEl.textContent = '서버 연결 오류';
+      errEl.style.display = 'block';
+    }
+  }
+</script>
+</body>
+</html>

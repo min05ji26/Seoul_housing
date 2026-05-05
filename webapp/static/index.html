@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>서울살이 — 주거지 추천</title>
+  <title>집찾봇 — 청년 주거 추천</title>
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
@@ -12,9 +12,9 @@
   <!-- ══ 사이드바 ══════════════════════════════════════ -->
   <nav id="sidebar">
     <div class="sidebar-brand">
-      <div class="brand-icon">🏡</div>
+      <div class="brand-icon">🏠</div>
       <div class="brand-text">
-        <div class="brand-name">앱이름</div>
+        <div class="brand-name">집찾봇</div>
         <div class="brand-sub">청년 주거 추천</div>
       </div>
     </div>
@@ -40,11 +40,11 @@
         <span class="nav-pct">35%</span>
       </a>
       <a class="nav-item disabled" href="#">
-        <span class="nav-left"><span class="nav-icon">💰</span> 예상 생활비</span>
+        <span class="nav-left"><span class="nav-icon">💸</span> 예상 생활비</span>
       </a>
     </div>
 
-    <div class="sidebar-section" id="current-conditions" style="display:none">
+    <div id="current-conditions" style="display:none">
       <div class="sidebar-label">현재 검색 조건</div>
       <div id="condition-chips"></div>
     </div>
@@ -52,12 +52,12 @@
     <div class="sidebar-bottom">
       <div class="sidebar-label">계정</div>
       <a class="nav-item disabled" href="#"><span class="nav-left"><span class="nav-icon">👤</span> 내 정보</span></a>
-      <a class="nav-item disabled" href="#"><span class="nav-left"><span class="nav-icon">🔓</span> 로그아웃</span></a>
+      <a class="nav-item" href="#" onclick="handleLogout(event)"><span class="nav-left"><span class="nav-icon">🚪</span> 로그아웃</span></a>
       <div class="user-chip">
         <div class="user-avatar">🐻</div>
         <div>
-          <div class="user-name">소연님</div>
-          <div class="user-sub">강남구 직장인</div>
+          <div class="user-name" id="sidebar-username">사용자님</div>
+          <div class="user-sub">청년 주거 탐색 중</div>
         </div>
       </div>
     </div>
@@ -89,22 +89,22 @@
     <div id="panel-body">
 
       <!-- 조건 입력 진행도 -->
-      <div>
+      <div class="panel-section">
         <div class="panel-section-title">조건 입력 진행도</div>
         <div id="progress-list"></div>
       </div>
 
       <!-- 입력된 조건 -->
-      <div>
+      <div class="panel-section">
         <div class="panel-section-title">입력된 조건</div>
         <div id="condition-table"></div>
       </div>
 
       <!-- 빠른 이동 -->
-      <div>
+      <div class="panel-section">
         <div class="panel-section-title">빠른 이동</div>
         <div class="quick-link"><span class="ql-icon">📋</span> 이사 체크리스트</div>
-        <div class="quick-link"><span class="ql-icon">💰</span> 예상 생활비</div>
+        <div class="quick-link"><span class="ql-icon">💸</span> 예상 생활비</div>
         <div class="quick-link"><span class="ql-icon">👤</span> 내 정보</div>
       </div>
 
@@ -118,6 +118,29 @@
   </aside>
 
 </div>
+<script>
+  // 로그인 토큰 없으면 /login 으로 리다이렉트
+  (function() {
+    if (!localStorage.getItem('token')) {
+      location.href = '/login';
+    } else {
+      const nick = localStorage.getItem('nickname');
+      if (nick) {
+        document.addEventListener('DOMContentLoaded', function() {
+          const el = document.getElementById('sidebar-username');
+          if (el) el.textContent = nick + '님';
+        });
+      }
+    }
+  })();
+
+  function handleLogout(e) {
+    e.preventDefault();
+    localStorage.removeItem('token');
+    localStorage.removeItem('nickname');
+    location.href = '/login';
+  }
+</script>
 <script src="/static/app.js"></script>
 </body>
 </html>

@@ -1,0 +1,420 @@
+/* ============================================================
+   auth.css  —  로그인 / 회원가입 공통 스타일
+   Reference: Login.css + Signup.css (Seoul_housing UI)
+   ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700&display=swap');
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'Noto Sans KR', sans-serif;
+  background: #F3F4F6;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ── 전체 컨테이너 ─────────────────────────────────── */
+.auth-container {
+  display: flex;
+  height: 100vh;
+  width: 100%;
+}
+
+/* ── 왼쪽 패널 ────────────────────────────────────── */
+.auth-left {
+  width: 36%;
+  min-width: 280px;
+  background: linear-gradient(180deg, #2D6A4F 75%, #4EC18F 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 36px;
+  color: #fff;
+  gap: 16px;
+}
+
+.auth-icon-box {
+  font-size: 52px;
+  background: rgba(255,255,255,0.15);
+  border-radius: 20px;
+  width: 80px;
+  height: 80px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 8px;
+}
+
+.auth-app-title {
+  font-size: 32px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+}
+
+.auth-app-sub {
+  font-size: 14px;
+  opacity: 0.85;
+  line-height: 1.6;
+  text-align: center;
+}
+
+.auth-badge {
+  background: rgba(255,255,255,0.18);
+  border: 1px solid rgba(255,255,255,0.35);
+  border-radius: 20px;
+  padding: 6px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  margin-top: 4px;
+}
+
+.auth-feature-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  margin-top: 12px;
+}
+
+.auth-feature-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: rgba(255,255,255,0.12);
+  border-radius: 12px;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+/* ── 오른쪽 패널 ──────────────────────────────────── */
+.auth-right {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 20px;
+  overflow-y: auto;
+}
+
+/* ── 카드 ────────────────────────────────────────── */
+.auth-card {
+  background: #fff;
+  border-radius: 25px;
+  padding: 48px 40px;
+  width: 100%;
+  max-width: 453px;
+  box-shadow: 0 4px 32px rgba(0,0,0,0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.auth-title {
+  font-size: 24px;
+  font-weight: 700;
+  color: #111827;
+  margin-bottom: 6px;
+}
+
+.auth-subtitle {
+  font-size: 14px;
+  color: #6B7280;
+  margin-bottom: 24px;
+  line-height: 1.5;
+}
+
+/* ── 카카오 버튼 ──────────────────────────────────── */
+.kakao-btn {
+  width: 100%;
+  background: #FEE500;
+  border: none;
+  border-radius: 15px;
+  padding: 16px;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  margin-bottom: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #3C1E1E;
+  font-family: inherit;
+  transition: background 0.18s;
+}
+
+.kakao-btn:hover { background: #f5dc00; }
+
+/* ── Divider (카카오 / 이메일 사이) ───────────────── */
+.auth-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.auth-divider-line {
+  flex: 1;
+  height: 1px;
+  background: #E5E7EB;
+}
+
+.auth-divider-text {
+  color: #9CA3AF;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+/* ── 라벨 / 인풋 ──────────────────────────────────── */
+.auth-label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+  margin-top: 16px;
+  margin-bottom: 6px;
+}
+
+.auth-label:first-of-type {
+  margin-top: 0;
+}
+
+.auth-input {
+  width: 100%;
+  padding: 12px 14px;
+  border: 2px solid #E5E7EB;
+  border-radius: 12px;
+  font-size: 14px;
+  font-family: inherit;
+  color: #111827;
+  background: #FAFAFA;
+  outline: none;
+  transition: border-color 0.18s;
+}
+
+.auth-input:focus {
+  border-color: #3ECF8E;
+  background: #fff;
+}
+
+.auth-input::placeholder {
+  color: #9CA3AF;
+}
+
+/* ── 힌트 텍스트 ──────────────────────────────────── */
+.auth-hint {
+  font-size: 11px;
+  color: #9CA3AF;
+  margin-top: 4px;
+  line-height: 1.5;
+}
+
+/* ── 성별 버튼 그룹 ───────────────────────────────── */
+.gender-group {
+  display: flex;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.gender-btn {
+  flex: 1;
+  padding: 11px 0;
+  border: 2px solid #E5E7EB;
+  border-radius: 12px;
+  background: #FAFAFA;
+  font-size: 14px;
+  font-family: inherit;
+  font-weight: 500;
+  color: #374151;
+  cursor: pointer;
+  transition: all 0.18s;
+}
+
+.gender-btn:hover {
+  border-color: #3ECF8E;
+  background: #E6FFF4;
+  color: #1B7A52;
+}
+
+.gender-btn.selected {
+  border-color: #3ECF8E;
+  background: #3ECF8E;
+  color: #fff;
+  font-weight: 600;
+}
+
+/* ── 주 버튼 ──────────────────────────────────────── */
+.auth-btn {
+  width: 100%;
+  padding: 14px;
+  margin-top: 24px;
+  background: #3ECF8E;
+  border: none;
+  border-radius: 15px;
+  font-size: 15px;
+  font-family: inherit;
+  font-weight: 700;
+  color: #fff;
+  cursor: pointer;
+  transition: background 0.18s, transform 0.12s;
+  letter-spacing: 0.2px;
+}
+
+.auth-btn:hover  { background: #2fb87a; }
+.auth-btn:active { transform: scale(0.98); }
+
+/* ── 하단 링크 ────────────────────────────────────── */
+.auth-footer {
+  text-align: center;
+  font-size: 13px;
+  color: #6B7280;
+  margin-top: 20px;
+}
+
+.auth-footer-link {
+  color: #3ECF8E;
+  font-weight: 600;
+  text-decoration: none;
+  margin-left: 4px;
+}
+
+.auth-footer-link:hover { text-decoration: underline; }
+
+.auth-auto {
+  text-align: center;
+  font-size: 11px;
+  color: #9CA3AF;
+  margin-top: 10px;
+}
+
+/* ── 에러 배너 ────────────────────────────────────── */
+.error-banner {
+  background: #FEE2E2;
+  border: 1px solid #FECACA;
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 13px;
+  color: #B91C1C;
+  margin-bottom: 12px;
+  line-height: 1.5;
+}
+
+/* ── 비밀번호 찾기 전용 ────────────────────────────── */
+.forgot-emoji {
+  font-size: 48px;
+  display: block;
+  text-align: center;
+  margin-bottom: 12px;
+}
+
+.auth-input-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.auth-input-row .auth-input { flex: 1; }
+
+.send-btn {
+  flex-shrink: 0;
+  background: #3ECF8E;
+  color: #fff;
+  border: none;
+  border-radius: 12px;
+  padding: 0 18px;
+  font-size: 13px;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.18s;
+}
+.send-btn:hover { background: #2fb87a; }
+.send-btn:disabled { background: #d1d5db; cursor: not-allowed; }
+
+.code-sent-box {
+  background: #E6FFF4;
+  border: 1px solid #b8eed4;
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 13px;
+  color: #1B7A52;
+  margin: 14px 0 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.code-input {
+  width: 100%;
+  padding: 16px;
+  border: 2px solid #E5E7EB;
+  border-radius: 12px;
+  font-size: 22px;
+  letter-spacing: 8px;
+  text-align: center;
+  font-family: 'Courier New', monospace;
+  font-weight: 700;
+  color: #111827;
+  background: #FAFAFA;
+  outline: none;
+  margin-bottom: 8px;
+}
+.code-input:focus { border-color: #3ECF8E; background: #fff; }
+
+.timer-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 14px;
+  font-size: 13px;
+}
+
+.timer { color: #DC2626; font-weight: 600; }
+
+.resend-btn {
+  background: transparent;
+  border: none;
+  color: #3ECF8E;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  text-decoration: underline;
+}
+
+.error-msg-inline {
+  font-size: 12px;
+  color: #B91C1C;
+  margin-top: 4px;
+  margin-bottom: 8px;
+}
+
+/* ── 반응형 ───────────────────────────────────────── */
+@media (max-width: 768px) {
+  body { overflow: auto; }
+
+  .auth-container {
+    flex-direction: column;
+    height: auto;
+    min-height: 100vh;
+  }
+
+  .auth-left {
+    width: 100%;
+    min-width: unset;
+    padding: 32px 24px;
+    position: relative;
+    height: auto;
+  }
+
+  .auth-right {
+    padding: 24px 16px 40px;
+  }
+
+  .auth-card {
+    padding: 32px 24px;
+  }
+}

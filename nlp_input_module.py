@@ -147,6 +147,7 @@ class ChatBot:
         self._asked_policy  = False
         self._done          = False
         self._last_asked_slot: Optional[str] = None  # 직전에 물어본 슬롯
+        self.user_meta: Dict[str, str] = {}  # 로그인 유저 정보 (birth_date, gender, age, nickname)
 
     # ── 필수 슬롯 확인 ──────────────────────────────────────
 

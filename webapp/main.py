@@ -4,10 +4,14 @@ webapp/main.py
 FastAPI 백엔드
 
 엔드포인트:
-  GET  /              → index.html
+  GET  /              → index.html (로그인 토큰 없으면 /login 리다이렉트)
+  GET  /login         → login.html
+  GET  /signup        → signup.html
   GET  /static/*      → CSS / JS
   GET  /api/health    → 서버 상태
-  POST /api/chat      → 챗봇 1턴
+  POST /auth/signup   → 회원가입
+  POST /auth/login    → 로그인
+  POST /api/chat      → 챗봇 1턴 (토큰에서 birth_date/gender 추출 → 청년정책)
   POST /api/recommend → v5 추천 실행
 """
 
@@ -15,10 +19,11 @@ import os
 import sys
 import io
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Dict, Optional
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
@@ -28,9 +33,25 @@ ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
 from nlp_input_module import ChatBot
+from webapp.database import init_db
+from webapp.auth import router as auth_router, decode_token
+from webapp.password import router as password_router
+from webapp.user import router as user_router
+from webapp.checklist import router as checklist_router
+
+
+# ── DB 초기화 (서버 시작 시 1회) ─────────────────────────
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()
+    yield
 
 # ──────────────────────────────────────────────────────────
-app = FastAPI(title="서울살이 챗봇 API")
+app = FastAPI(title="집찾봇 API", lifespan=lifespan)
+app.include_router(auth_router,      prefix="/auth",      tags=["인증"])
+app.include_router(password_router,  prefix="/password",  tags=["비밀번호"])
+app.include_router(user_router,      prefix="/user",      tags=["유저"])
+app.include_router(checklist_router, prefix="/checklist", tags=["체크리스트"])
 
 STATIC_DIR = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
@@ -69,15 +90,41 @@ async def index():
     return FileResponse(str(STATIC_DIR / "index.html"))
 
 
+@app.get("/login")
+async def login_page():
+    return FileResponse(str(STATIC_DIR / "login.html"))
+
+
+@app.get("/signup")
+async def signup_page():
+    return FileResponse(str(STATIC_DIR / "signup.html"))
+
+
+@app.get("/forgot-password")
+async def forgot_password_page():
+    return FileResponse(str(STATIC_DIR / "forgot-password.html"))
+
+
 @app.get("/api/health")
 async def health():
     return {"status": "ok"}
 
 
 @app.post("/api/chat")
-async def chat(req: ChatRequest):
+async def chat(req: ChatRequest, request: Request):
     session_id = req.session_id or str(uuid.uuid4())
     bot = _get_bot(session_id)
+
+    # 로그인 토큰에서 유저 정보 추출 (청년정책 1차 적용)
+    token = request.headers.get("Authorization", "").replace("Bearer ", "")
+    user_info = decode_token(token) if token else None
+    if user_info and not bot.user_meta:
+        bot.user_meta = {
+            "age":        str(user_info.get("age", "")),
+            "birth_date": user_info.get("birth_date", ""),
+            "gender":     user_info.get("gender", ""),
+            "nickname":   user_info.get("nickname", ""),
+        }
 
     reply, is_done, v5_params = bot.process(req.user_message)
 

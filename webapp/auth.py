@@ -1,0 +1,225 @@
+"""
+webapp/auth.py
+──────────────
+회원가입 / 로그인 API
+- 이메일+비밀번호
+- 카카오 OAuth
+JWT 토큰에 birth_date, gender, nickname 포함 → 청년정책 1차 적용용
+"""
+import os
+import sqlite3
+from datetime import datetime, timedelta, date
+from typing import Optional
+
+import httpx
+from fastapi import APIRouter, HTTPException
+from fastapi.responses import RedirectResponse
+from pydantic import BaseModel
+from passlib.context import CryptContext
+from jose import jwt
+
+from webapp.database import get_conn
+
+router = APIRouter()
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+SECRET_KEY = os.getenv("SECRET_KEY", "seoul-salai-dev-secret-key-2026")
+ALGORITHM  = "HS256"
+TOKEN_EXPIRE_HOURS = 72
+
+# 카카오 OAuth
+KAKAO_CLIENT_ID     = os.getenv("KAKAO_CLIENT_ID")
+KAKAO_CLIENT_SECRET = os.getenv("KAKAO_CLIENT_SECRET")
+KAKAO_REDIRECT_URI  = os.getenv("KAKAO_REDIRECT_URI", "http://localhost:8000/auth/kakao/callback")
+
+
+# ── 요청 스키마 ──────────────────────────────────────────
+class SignupRequest(BaseModel):
+    email:      str
+    password:   str
+    birth_date: str    # "YYYY-MM-DD"
+    gender:     str    # "M" / "F"
+    nickname:   str = ""
+
+
+class LoginRequest(BaseModel):
+    email:    str
+    password: str
+
+
+# ── 유틸 ─────────────────────────────────────────────────
+def _create_token(payload: dict) -> str:
+    data = payload.copy()
+    data["exp"] = datetime.utcnow() + timedelta(hours=TOKEN_EXPIRE_HOURS)
+    return jwt.encode(data, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def _calc_age(birth_date_str: str) -> int:
+    try:
+        birth = date.fromisoformat(birth_date_str)
+        today = date.today()
+        return today.year - birth.year - (
+            (today.month, today.day) < (birth.month, birth.day)
+        )
+    except Exception:
+        return 0
+
+
+# ── 회원가입 ─────────────────────────────────────────────
+@router.post("/signup")
+def signup(req: SignupRequest):
+    if "@" not in req.email:
+        raise HTTPException(status_code=400, detail="올바른 이메일 형식이 아닙니다")
+    if len(req.password) < 8:
+        raise HTTPException(status_code=400, detail="비밀번호는 8자 이상이어야 합니다")
+    if req.gender not in ("M", "F"):
+        raise HTTPException(status_code=400, detail="성별을 선택해주세요")
+
+    hashed_pw = pwd_context.hash(req.password)
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO users (email, password, birth_date, gender, nickname) VALUES (?,?,?,?,?)",
+            (req.email, hashed_pw, req.birth_date, req.gender, req.nickname),
+        )
+        conn.commit()
+        user_id = cur.lastrowid
+    except sqlite3.IntegrityError:
+        raise HTTPException(status_code=400, detail="이미 사용 중인 이메일입니다")
+    finally:
+        conn.close()
+
+    token = _create_token({
+        "sub":        str(user_id),
+        "email":      req.email,
+        "nickname":   req.nickname,
+        "birth_date": req.birth_date,
+        "gender":     req.gender,
+        "age":        _calc_age(req.birth_date),
+    })
+    return {
+        "message":      "회원가입 완료",
+        "access_token": token,
+        "nickname":     req.nickname,
+        "user_id":      user_id,
+    }
+
+
+# ── 로그인 ───────────────────────────────────────────────
+@router.post("/login")
+def login(req: LoginRequest):
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT * FROM users WHERE email=?", (req.email,)
+        ).fetchone()
+    finally:
+        conn.close()
+
+    if not row or not pwd_context.verify(req.password, row["password"]):
+        raise HTTPException(status_code=401, detail="이메일 또는 비밀번호가 틀렸습니다")
+
+    token = _create_token({
+        "sub":        str(row["id"]),
+        "email":      row["email"],
+        "nickname":   row["nickname"] or "",
+        "birth_date": row["birth_date"] or "",
+        "gender":     row["gender"] or "",
+        "age":        _calc_age(row["birth_date"] or ""),
+    })
+    return {
+        "message":      "로그인 성공",
+        "access_token": token,
+        "nickname":     row["nickname"] or "",
+        "user_id":      row["id"],
+    }
+
+
+# ── 카카오 OAuth ─────────────────────────────────────────
+@router.get("/kakao")
+def kakao_login():
+    if not KAKAO_CLIENT_ID:
+        raise HTTPException(
+            status_code=503,
+            detail="카카오 로그인은 현재 비활성화 상태입니다 (KAKAO_CLIENT_ID 미설정)"
+        )
+    kakao_auth_url = (
+        f"https://kauth.kakao.com/oauth/authorize"
+        f"?client_id={KAKAO_CLIENT_ID}"
+        f"&redirect_uri={KAKAO_REDIRECT_URI}"
+        f"&response_type=code"
+        f"&prompt=login"
+    )
+    return RedirectResponse(kakao_auth_url)
+
+
+@router.get("/kakao/callback")
+async def kakao_callback(code: str = None):
+    if not code:
+        raise HTTPException(status_code=400, detail="code가 없습니다")
+
+    async with httpx.AsyncClient() as client:
+        token_res = await client.post(
+            "https://kauth.kakao.com/oauth/token",
+            data={
+                "grant_type":    "authorization_code",
+                "client_id":     KAKAO_CLIENT_ID,
+                "client_secret": KAKAO_CLIENT_SECRET,
+                "redirect_uri":  KAKAO_REDIRECT_URI,
+                "code":          code,
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"}
+        )
+        token_data   = token_res.json()
+        access_token = token_data.get("access_token")
+        user_res = await client.get(
+            "https://kapi.kakao.com/v2/user/me",
+            headers={"Authorization": f"Bearer {access_token}"}
+        )
+        user_info = user_res.json()
+
+    kakao_id = str(user_info.get("id"))
+    nickname = user_info.get("properties", {}).get("nickname", "사용자")
+
+    conn = get_conn()
+    try:
+        row = conn.execute("SELECT * FROM users WHERE kakao_id=?", (kakao_id,)).fetchone()
+        if not row:
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT INTO users (kakao_id, nickname) VALUES (?,?)",
+                (kakao_id, nickname),
+            )
+            conn.commit()
+            user_id = cur.lastrowid
+            birth, gender = "", ""
+        else:
+            user_id = row["id"]
+            nickname = row["nickname"] or nickname
+            birth    = row["birth_date"] or ""
+            gender   = row["gender"] or ""
+    finally:
+        conn.close()
+
+    token = _create_token({
+        "sub":        str(user_id),
+        "nickname":   nickname,
+        "birth_date": birth,
+        "gender":     gender,
+        "age":        _calc_age(birth),
+    })
+    # 로그인 페이지로 리다이렉트하면서 토큰 전달 (login.html JS가 처리)
+    redirect_url = f"/login?token={token}&nickname={nickname}&user_id={user_id}"
+    return RedirectResponse(redirect_url)
+
+
+# ── 토큰 검증 (내부 유틸) ────────────────────────────────
+def decode_token(token: str) -> Optional[dict]:
+    try:
+        return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    except Exception:
+        return None
+
+

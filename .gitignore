@@ -25,3 +25,8 @@ Phase*_작업보고.md
 
 # 데이터 (용량 큼, 별도 관리)
 사용_csv_모음/
+
+# SQLite DB (사용자 데이터 — 로컬 전용)
+*.db
+*.sqlite
+*.sqlite3

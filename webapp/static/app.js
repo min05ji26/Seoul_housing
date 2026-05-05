@@ -4,6 +4,14 @@
 let sessionId = null;
 let isWaiting = false;
 
+// ── 인증 토큰 ────────────────────────────────────────────
+function getAuthHeaders() {
+  const token = localStorage.getItem('token');
+  return token
+    ? { "Content-Type": "application/json", "Authorization": "Bearer " + token }
+    : { "Content-Type": "application/json" };
+}
+
 // ── DOM ──────────────────────────────────────────────────
 const messagesEl     = document.getElementById("messages");
 const inputEl        = document.getElementById("user-input");
@@ -65,7 +73,7 @@ async function sendMessage(text) {
   try {
     const res  = await fetch("/api/chat", {
       method:  "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: getAuthHeaders(),
       body:    JSON.stringify({ user_message: userText, session_id: sessionId }),
     });
     const data = await res.json();
@@ -100,7 +108,7 @@ async function startRecommendation() {
   try {
     const res  = await fetch("/api/recommend", {
       method:  "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: getAuthHeaders(),
       body:    JSON.stringify({ session_id: sessionId }),
     });
     const data = await res.json();
