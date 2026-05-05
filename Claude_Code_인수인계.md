@@ -175,6 +175,54 @@
 | 역명 입력 시 재질문 안 됨 | `nlp_input_module.py` `process()` | LLM 추출 `work_address`도 머지 전 `_validate_work_address()` 검증. 무효 시 `new_slots`에서 제거 + `_last_asked_slot="work_address"` 유지 → 재질문 정상 동작 |
 | 통근시간 숫자만 입력 | `nlp_input_module.py` `_parse_commute_minutes()` | 순수 숫자 입력(`^\s*(\d+)\s*$`) → 분으로 처리하는 폴백 추가. "80" → 80분 인식. 5~300분 필터 동일 적용 |
 
+### 인증 시스템 통합 + git UI 매칭 (2026-05-05 3차)
+
+배경: 회원가입 정보(생년월일·성별)를 청년정책 1차 매칭에 활용하기 위해 로그인/회원가입 도입. UI는 https://github.com/min05ji26/Seoul_housing 레포에 맞춤.
+
+**UI 신규 페이지 (Vanilla HTML/CSS/JS, React 미사용)**
+
+| 파일 | 내용 |
+|------|------|
+| `webapp/static/login.html` | 카카오 시작 버튼 + divider + 비밀번호 찾기 링크. 카카오 콜백 token 쿼리 처리 |
+| `webapp/static/signup.html` | 카카오 시작 버튼 + divider. 닉네임/이메일/비번/생일/성별 입력 |
+| `webapp/static/forgot-password.html` | 3단계 마법사 (이메일→6자리코드→새비번), 5분 타이머 |
+| `webapp/static/auth.css` | 신규. `.kakao-btn(#FEE500)`, `.auth-divider`, `.code-input`, `.timer-row` 등 |
+| `webapp/static/index.html` | 토큰 없으면 `/login` 리다이렉트, 로그아웃 버튼, 닉네임 표시. 브랜드 "서울살이"→"집찾봇" |
+| `webapp/static/app.js` | `getAuthHeaders()` 헬퍼 추가, `/api/chat`·`/api/recommend` 호출 시 `Authorization: Bearer` 자동 첨부 |
+
+**백엔드 라우터 (모두 신규)**
+
+| 파일 | 내용 |
+|------|------|
+| `webapp/database.py` | sqlite3 직접 사용 (SQLAlchemy 미사용 — greenlet/C++ 컴파일러 회피). `users.kakao_id` 컬럼 + `checklist_items`/`search_conditions`/`recommendation_history` 테이블. `_column_exists()` 자동 마이그레이션 |
+| `webapp/auth.py` | `/auth/signup`, `/auth/login`, `/auth/kakao`, `/auth/kakao/callback`. JWT 페이로드에 birth_date/gender/age/nickname 포함. `decode_token()` 헬퍼로 `/api/chat`에서 토큰→`bot.user_meta` 주입 |
+| `webapp/password.py` | `/password/send-code`(6자리, 10분 만료), `/password/verify-code`, `/password/reset-password`. Gmail SMTP 미설정 시 콘솔에 코드 출력 (개발모드) |
+| `webapp/user.py` | `/user/{id}` 내정보, `/user/{id}/nickname` PATCH, `/user/{id}/conditions` 검색조건, `/user/{id}/recommendations` 추천이력 |
+| `webapp/checklist.py` | `/checklist` GET/POST/PATCH/DELETE. 첫 GET 시 13개 기본 항목 자동 시드 |
+| `webapp/main.py` | 4개 라우터 등록, `/login`·`/signup`·`/forgot-password` GET 추가. `/api/chat`에서 Authorization 헤더→token→bot.user_meta 주입 |
+| `nlp_input_module.py` | `ChatBot.__init__`에 `self.user_meta: Dict[str,str] = {}` 추가. JWT의 birth_date/gender/age 받아서 청년정책 1차 적용 가능 |
+
+**bcrypt 호환성 버그 수정**
+
+증상: 회원가입 시 500 Internal Server Error. `passlib 1.7.4`가 백엔드 초기화 시 72바이트 초과 시크릿으로 자체 검증을 시도하는데 `bcrypt 4.x`가 이를 거부 → `ValueError: password cannot be longer than 72 bytes`.
+
+해결:
+- `webapp/auth.py`, `webapp/password.py`: `passlib` 의존 제거, `bcrypt` 직접 사용
+- `_hash_password()` / `_verify_password()` 헬퍼: UTF-8 인코딩 후 72바이트 자르기 직접 처리
+
+**검증 결과**:
+| 케이스 | 결과 |
+|---|---|
+| 신규 회원가입 | ✅ 200 + JWT + user_id |
+| 중복 이메일 | ✅ 400 |
+| 정상 로그인 | ✅ 200 + JWT |
+| 틀린 비번 | ✅ 401 |
+| DB 저장 | ✅ DBeaver에서 users 테이블 직접 확인 |
+
+**의존성 추가**: `python-jose`, `bcrypt` (passlib 제거 권장)
+
+**git 제외 추가**: `*.db`, `*.sqlite`, `*.sqlite3` (사용자 데이터 보호)
+
 ---
 
 ## 3. 핵심 결정 사항
@@ -330,6 +378,26 @@ python -m uvicorn webapp.main:app --host 0.0.0.0 --port 8000  # --reload 없이
 - 역명(`강남역`)·건물명(`코엑스`, `타워` 등) 입력 시 챗봇이 오류 메시지 반환 후 재질문
 - 내부적으로 `_validate_work_address()` + `geocode_address_kakao_with_fallback()` 이중 방어
 
+### 주의 11: passlib + bcrypt 4.x 호환성
+- `passlib 1.7.4`는 `bcrypt 4.x`와 호환 안 됨. 회원가입 시 500 에러로 나타남
+- `passlib.context.CryptContext` 사용 금지. `bcrypt` 패키지 직접 사용 (`bcrypt.hashpw`, `bcrypt.checkpw`)
+- 비밀번호는 UTF-8 인코딩 후 `[:72]`로 잘라서 전달 (bcrypt 72바이트 제한)
+
+### 주의 12: SQLAlchemy 미사용 정책
+- `greenlet`이 C++ 컴파일러를 요구해서 Windows 노트북 환경에서 설치 실패
+- `sqlite3` 표준 라이브러리만 사용. ORM 필요시 raw SQL로 작성
+- DBeaver는 `webapp/housing.db` 경로로 SQLite 연결해서 GUI 확인 가능
+
+### 주의 13: DBeaver 데이터 새로고침
+- 좌측 트리에서 테이블 클릭만으로는 데이터 패널 자동 갱신 안 됨
+- 테이블 우클릭 → "데이터 편집" / "Read Data" 더블클릭, 또는 SQL Editor에서 `SELECT * FROM users` 직접 실행
+- 데이터 패널 상단 탭 이름 확인 필수 (다른 테이블 보고 있는 경우 많음)
+
+### 주의 14: 카카오 OAuth & Gmail SMTP는 옵션
+- `KAKAO_CLIENT_ID` 미설정 시 `/auth/kakao` → 503 에러 (UI는 정상 표시)
+- `EMAIL_ADDRESS`/`EMAIL_PASSWORD` 미설정 시 비밀번호찾기 코드를 콘솔에 출력 (개발모드)
+- 실제 사용시 `.env`에 추가: Kakao Developers + Gmail 앱비밀번호 발급 필요
+
 ---
 
 ## 9. 마감 일정
@@ -361,9 +429,27 @@ Claude Code 새 세션에서:
 1. 이 메모 읽었음을 확인
 2. 사용자가 새 오류 리포트를 가져오면 해당 오류부터 처리
 3. 오류 없으면 경진대회 마감(5/13) 전 남은 항목 확인:
-   - 모바일 반응형 검증
-   - 추천 결과 UI 마무리
-   - 외부 시연 준비 (Cloudflare Tunnel 등)
+
+**✅ 완료된 항목 (2026-05-05 기준)**
+- 챗봇 슬롯 수집 / 추천 엔진 / 청년정책 매칭
+- vibe 8개 카테고리 통합
+- UI git 매칭 (집찾봇 브랜드, 카카오 버튼, 비밀번호찾기)
+- 회원가입/로그인 (이메일+비번, JWT, bcrypt 직접 사용)
+- DB 통합 (sqlite3 + DBeaver)
+
+**🔄 권장 추가 작업 (시간 여유 시)**
+- **회원가입 설계 메모 권장사항 반영**:
+  - 개인정보 수집·이용 동의 체크박스 (법적 권고)
+  - 비밀번호 영문+숫자 조합 검증 강화 (현재 8자만 체크)
+- 카카오 OAuth 키 발급 + `.env`에 `KAKAO_CLIENT_ID`/`KAKAO_CLIENT_SECRET` 추가
+- Gmail SMTP 설정 (비밀번호찾기 실제 발송) — 앱 비밀번호 발급 필요
+- Phase 5: vibe 학술 근거 자료 정리 (web search 기반)
+- 폴더 구조 재정리 (`docs/`, `core/`, `chatbot/`, `data/`, `tests/`)
+
+**🚀 마감 전 MUST**
+- 모바일 반응형 검증 (실기기/DevTools)
+- 추천 결과 UI 마무리 (지도뷰 등 disabled 메뉴 처리 확인)
+- 외부 시연 준비 (Cloudflare Tunnel)
 
 
 

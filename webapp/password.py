@@ -19,15 +19,18 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta
 
+import bcrypt
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from passlib.context import CryptContext
 
 from webapp.database import get_conn
 
 router = APIRouter()
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+def _hash_password(password: str) -> str:
+    pw_bytes = password.encode("utf-8")[:72]
+    return bcrypt.hashpw(pw_bytes, bcrypt.gensalt()).decode("utf-8")
 
 # 메모리에 (이메일 → {code, expire}) 저장. 운영 환경에서는 Redis 권장.
 _reset_codes: dict = {}
@@ -130,7 +133,7 @@ def reset_password(req: ResetPasswordRequest):
     if len(req.new_password) < 8:
         raise HTTPException(status_code=400, detail="비밀번호는 8자 이상이어야 합니다")
 
-    hashed = pwd_context.hash(req.new_password)
+    hashed = _hash_password(req.new_password)
     conn = get_conn()
     try:
         conn.execute("UPDATE users SET password=? WHERE email=?", (hashed, req.email))

@@ -11,18 +11,31 @@ import sqlite3
 from datetime import datetime, timedelta, date
 from typing import Optional
 
+import bcrypt
 import httpx
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
-from passlib.context import CryptContext
 from jose import jwt
 
 from webapp.database import get_conn
 
 router = APIRouter()
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+# ── bcrypt 직접 사용 (passlib 미사용: bcrypt 4.x 호환성) ──
+def _hash_password(password: str) -> str:
+    # bcrypt는 72바이트 제한이 있으므로 자르기
+    pw_bytes = password.encode("utf-8")[:72]
+    return bcrypt.hashpw(pw_bytes, bcrypt.gensalt()).decode("utf-8")
+
+
+def _verify_password(password: str, hashed: str) -> bool:
+    try:
+        pw_bytes = password.encode("utf-8")[:72]
+        return bcrypt.checkpw(pw_bytes, hashed.encode("utf-8"))
+    except Exception:
+        return False
 
 SECRET_KEY = os.getenv("SECRET_KEY", "seoul-salai-dev-secret-key-2026")
 ALGORITHM  = "HS256"
@@ -76,7 +89,7 @@ def signup(req: SignupRequest):
     if req.gender not in ("M", "F"):
         raise HTTPException(status_code=400, detail="성별을 선택해주세요")
 
-    hashed_pw = pwd_context.hash(req.password)
+    hashed_pw = _hash_password(req.password)
     conn = get_conn()
     try:
         cur = conn.cursor()
@@ -118,7 +131,7 @@ def login(req: LoginRequest):
     finally:
         conn.close()
 
-    if not row or not pwd_context.verify(req.password, row["password"]):
+    if not row or not _verify_password(req.password, row["password"] or ""):
         raise HTTPException(status_code=401, detail="이메일 또는 비밀번호가 틀렸습니다")
 
     token = _create_token({
