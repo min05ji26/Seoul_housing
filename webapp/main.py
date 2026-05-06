@@ -246,7 +246,33 @@ def _quick_options_for(slot: Optional[str], bot: ChatBot) -> list:
             {"label": "카페·문화", "value": "⑧ 카페·문화"},
             {"label": "상관없음",  "value": "⑨ 상관없음"},
         ]
-    # 청년정책 질문 중
+    # 청년정책 예/아니요
     if bot._asked_policy and bot.slots.get("use_youth_policy") is None:
         return [{"label": "예", "value": "예"}, {"label": "아니요", "value": "아니요"}]
+
+    # 청년정책 세부 슬롯 버튼 (use_youth_policy=True 후)
+    if bot.slots.get("use_youth_policy") and bot._last_asked_slot:
+        asked = bot._last_asked_slot
+        if asked == "policy_employment" and bot.slots.get("policy_employment") is None:
+            return [
+                {"label": "재직자",    "value": "① 재직자"},
+                {"label": "자영업자",  "value": "② 자영업자"},
+                {"label": "미취업자",  "value": "③ 미취업자"},
+                {"label": "프리랜서",  "value": "④ 프리랜서"},
+                {"label": "일경험없음","value": "⑤ 일경험없음"},
+            ]
+        if asked == "policy_marriage" and bot.slots.get("policy_marriage") is None:
+            return [{"label": "미혼", "value": "① 미혼"}, {"label": "기혼", "value": "② 기혼"}]
+        if asked == "policy_education" and bot.slots.get("policy_education") is None:
+            return [
+                {"label": "고졸이하",  "value": "① 고졸이하"},
+                {"label": "대학재학",  "value": "② 대학재학"},
+                {"label": "대졸",      "value": "③ 대졸"},
+                {"label": "석박사",    "value": "④ 석박사"},
+            ]
+        if asked == "policy_no_house" and bot.slots.get("policy_no_house") is None:
+            return [
+                {"label": "무주택 (없음)", "value": "① 무주택"},
+                {"label": "주택 소유",     "value": "② 주택소유"},
+            ]
     return []

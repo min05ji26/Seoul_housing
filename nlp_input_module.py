@@ -125,6 +125,42 @@ SLOT_DISPLAY = {
     "vibe":              "동네 분위기",
     "use_youth_policy":  "청년정책 반영",
     "region_filter":     "선호 지역",
+    # 청년정책 세부 슬롯
+    "policy_employment": "취업상태",
+    "policy_income":     "월 소득",
+    "policy_marriage":   "혼인상태",
+    "policy_education":  "학력",
+    "policy_no_house":   "무주택여부",
+}
+
+# 청년정책 세부 질문 (use_youth_policy=True 후 순서대로 수집)
+POLICY_SLOTS = [
+    "policy_employment",
+    "policy_income",
+    "policy_marriage",
+    "policy_education",
+    "policy_no_house",
+]
+
+POLICY_QUESTIONS = {
+    "policy_employment": (
+        "취업 상태를 선택해 주세요.\n"
+        "① 재직자  ② 자영업자  ③ 미취업자  ④ 프리랜서  ⑤ 일경험없음"
+    ),
+    "policy_income": (
+        "월 소득이 얼마인지 알려주세요.\n"
+        "(예: 200만원 / 250 / 소득 없음)\n"
+        "청년정책 자격 확인에만 사용됩니다."
+    ),
+    "policy_marriage": "혼인 상태를 선택해 주세요.\n① 미혼  ② 기혼",
+    "policy_education": (
+        "최종 학력을 선택해 주세요.\n"
+        "① 고졸이하  ② 대학재학  ③ 대졸  ④ 석박사"
+    ),
+    "policy_no_house": (
+        "현재 주택을 소유하고 있나요?\n"
+        "① 무주택 (소유 없음)  ② 주택 소유"
+    ),
 }
 
 # ──────────────────────────────────────────────────────────
@@ -201,11 +237,18 @@ class ChatBot:
                 "⑥ 편의 우선 ⑦ 운동·건강 ⑧ 카페·문화 ⑨ 상관없음"
             )
 
-        # 청년정책 확인
+        # 청년정책 확인 (예/아니요)
         if not self._asked_policy:
             self._asked_policy = True
             if self.slots.get("use_youth_policy") is None:
                 return "현재 조건에 맞는 청년정책도 같이 확인하시겠어요? (예 / 아니요)"
+
+        # 청년정책 세부 정보 수집 (use_youth_policy=True 선택 후 순서대로)
+        if self.slots.get("use_youth_policy"):
+            for slot in POLICY_SLOTS:
+                if self.slots.get(slot) is None:
+                    self._last_asked_slot = slot
+                    return POLICY_QUESTIONS[slot]
 
         return None  # 모든 슬롯 완료
 
@@ -311,6 +354,78 @@ class ChatBot:
             return False
         return None
 
+    # ── 청년정책 세부 슬롯 파서 ────────────────────────────
+
+    _EMPLOYMENT_MAP = {
+        "1": "재직자",   "①": "재직자",
+        "2": "자영업자", "②": "자영업자",
+        "3": "미취업자", "③": "미취업자",
+        "4": "프리랜서", "④": "프리랜서",
+        "5": "일경험없음", "⑤": "일경험없음",
+    }
+
+    _MARRIAGE_MAP = {
+        "1": "미혼", "①": "미혼",
+        "2": "기혼", "②": "기혼",
+    }
+
+    _EDUCATION_MAP = {
+        "1": "고졸이하", "①": "고졸이하",
+        "2": "대학재학", "②": "대학재학",
+        "3": "대졸",     "③": "대졸",
+        "4": "석박사",   "④": "석박사",
+    }
+
+    @classmethod
+    def _parse_employment_choice(cls, text: str) -> Optional[str]:
+        for k, v in cls._EMPLOYMENT_MAP.items():
+            if k in text:
+                return v
+        if re.search(r"재직|직장|회사|근무", text):
+            return "재직자"
+        if re.search(r"자영|사업|프리랜서|프리", text):
+            return "프리랜서" if re.search(r"프리", text) else "자영업자"
+        if re.search(r"미취업|취업준비|구직|취준|백수", text):
+            return "미취업자"
+        if re.search(r"일경험|경험없", text):
+            return "일경험없음"
+        return None
+
+    @classmethod
+    def _parse_marriage_choice(cls, text: str) -> Optional[str]:
+        for k, v in cls._MARRIAGE_MAP.items():
+            if k in text:
+                return v
+        if re.search(r"미혼|싱글|혼자|비혼|결혼안|결혼 안", text):
+            return "미혼"
+        if re.search(r"기혼|결혼|배우자|유부", text):
+            return "기혼"
+        return None
+
+    @classmethod
+    def _parse_education_choice(cls, text: str) -> Optional[str]:
+        for k, v in cls._EDUCATION_MAP.items():
+            if k in text:
+                return v
+        if re.search(r"석사|박사", text):
+            return "석박사"
+        if re.search(r"대졸|대학교\s*졸|4년제\s*졸", text):
+            return "대졸"
+        if re.search(r"재학|대학교\s*재|다니|학생", text):
+            return "대학재학"
+        if re.search(r"고졸|고등학교|고등\s*졸", text):
+            return "고졸이하"
+        return None
+
+    @staticmethod
+    def _parse_no_house_choice(text: str) -> Optional[str]:
+        # ① / 1 / "무주택" → "y"   ② / 2 / "소유" → "n"
+        if re.search(r"[①1]|무주택|없어|소유\s*안|안\s*소유", text):
+            return "y"
+        if re.search(r"[②2]|소유|있어|주택\s*있|집\s*있", text):
+            return "n"
+        return None
+
     # ── 메인 process() ─────────────────────────────────────
 
     def process(self, user_text: str):
@@ -351,6 +466,31 @@ class ChatBot:
                 m = re.search(r"(\d+)", txt)
                 if m:
                     new_slots["monthly_manwon"] = int(m.group(1))
+            # ── 청년정책 세부 슬롯 ──
+            elif asked == "policy_employment":
+                parsed = self._parse_employment_choice(txt)
+                if parsed:
+                    new_slots["policy_employment"] = parsed
+            elif asked == "policy_income":
+                # "소득 없음" / "없어" → 0
+                if re.search(r"없|0|없음", txt):
+                    new_slots["policy_income"] = "0"
+                else:
+                    parsed = _parse_manwon(txt)
+                    if parsed is not None:
+                        new_slots["policy_income"] = str(parsed)
+            elif asked == "policy_marriage":
+                parsed = self._parse_marriage_choice(txt)
+                if parsed:
+                    new_slots["policy_marriage"] = parsed
+            elif asked == "policy_education":
+                parsed = self._parse_education_choice(txt)
+                if parsed:
+                    new_slots["policy_education"] = parsed
+            elif asked == "policy_no_house":
+                parsed = self._parse_no_house_choice(txt)
+                if parsed is not None:
+                    new_slots["policy_no_house"] = parsed
 
         # LLM이 추출한 work_address도 검증 (역명·건물명 거부)
         if new_slots.get("work_address") and self.slots.get("work_address") is None:
@@ -446,7 +586,18 @@ class ChatBot:
         if vibe:
             lines.append(f"- 동네 분위기: {', '.join(vibe)}")
         if s.get("use_youth_policy"):
-            lines.append("- 청년정책: 반영")
+            emp  = s.get("policy_employment", "")
+            inc  = s.get("policy_income", "")
+            mrg  = s.get("policy_marriage", "")
+            edu  = s.get("policy_education", "")
+            nh   = "무주택" if s.get("policy_no_house") == "y" else "주택소유" if s.get("policy_no_house") == "n" else ""
+            age  = self.user_meta.get("age", "")
+            detail = "  |  ".join(filter(None, [
+                f"나이 {age}세" if age else "",
+                emp, f"소득 {inc}만원" if inc else "",
+                mrg, edu, nh,
+            ]))
+            lines.append(f"- 청년정책: 반영  ({detail})" if detail else "- 청년정책: 반영")
         return "\n".join(lines)
 
     # ── v5 파라미터 변환 ────────────────────────────────────
@@ -493,9 +644,15 @@ class ChatBot:
 
         user_info = None
         if use_policy:
+            # JWT에서 나이 가져오기 (user_meta는 /api/chat 시 로그인 토큰에서 채워짐)
+            age_val = self.user_meta.get("age", "") or ""
             user_info = {
-                "age": "29", "employment": "재직", "income_manwon": "250",
-                "marriage": "미혼", "education": "대졸", "no_house": "무주택",
+                "age":          str(age_val),
+                "employment":   s.get("policy_employment", ""),
+                "income_manwon": s.get("policy_income", ""),
+                "marriage":     s.get("policy_marriage", ""),
+                "education":    s.get("policy_education", ""),
+                "no_house":     s.get("policy_no_house", "y"),
             }
 
         return dict(
@@ -540,4 +697,18 @@ class ChatBot:
                 "value":  display_val,
                 "filled": v is not None,
             })
+
+        # 청년정책 세부 슬롯 (반영 선택 시에만 표시)
+        if self.slots.get("use_youth_policy"):
+            for k in POLICY_SLOTS:
+                v = self.slots.get(k)
+                display_val = v
+                if k == "policy_no_house":
+                    display_val = "무주택" if v == "y" else "주택소유" if v == "n" else None
+                rows.append({
+                    "key":    k,
+                    "label":  SLOT_DISPLAY.get(k, k),
+                    "value":  display_val,
+                    "filled": v is not None,
+                })
         return rows
