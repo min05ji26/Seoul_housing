@@ -105,6 +105,11 @@ async def forgot_password_page():
     return FileResponse(str(STATIC_DIR / "forgot-password.html"))
 
 
+@app.get("/recommendation")
+async def recommendation_page():
+    return FileResponse(str(STATIC_DIR / "recommendation.html"))
+
+
 @app.get("/api/health")
 async def health():
     return {"status": "ok"}

@@ -21,8 +21,6 @@ const progressListEl = document.getElementById("progress-list");
 const condTableEl    = document.getElementById("condition-table");
 const condChipsEl    = document.getElementById("condition-chips");
 const resultsBtnEl   = document.getElementById("result-btn");
-const resultsSectionEl = document.getElementById("results-section");
-const resultsListEl  = document.getElementById("results-list");
 
 // 진행도 항목 정의 (순서 = 챗봇 질문 순서)
 const PROGRESS_STEPS = [
@@ -35,6 +33,9 @@ const PROGRESS_STEPS = [
 
 // ── 초기화 ───────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
+  // 이전 추천 결과 있으면 사이드바 "주거 추천" 활성화
+  if (localStorage.getItem("rec_session_id")) enableRecNav();
+
   renderProgressList([]);
   renderConditionTable([]);
   appendBotMessage(
@@ -84,8 +85,13 @@ async function sendMessage(text) {
     renderQuickOptions(data.quick_options);
 
     if (data.is_complete) {
+      // 세션 ID를 localStorage에 저장 → 추천 결과 페이지에서 불러옴
+      localStorage.setItem("rec_session_id", sessionId);
+      // 현재 검색 조건 칩 저장 (추천 페이지 요약 바용)
+      saveCondChips(data.slot_status);
+      // 사이드바 "주거 추천" 활성화
+      enableRecNav();
       resultsBtnEl.classList.add("visible");
-      startRecommendation();
     }
   } catch (err) {
     appendBotMessage("오류가 발생했습니다. 잠시 후 다시 시도해 주세요.");
@@ -95,43 +101,39 @@ async function sendMessage(text) {
   }
 }
 
-// ── 추천 실행 ────────────────────────────────────────────
-async function startRecommendation() {
-  resultsSectionEl.style.display = "block";
-  resultsListEl.innerHTML = `
-    <div style="text-align:center;padding:20px;color:#a1a1aa">
-      <div class="spinner"></div>
-      <div style="margin-top:8px;font-size:0.8rem">추천 계산 중…</div>
-    </div>
-  `;
-
-  try {
-    const res  = await fetch("/api/recommend", {
-      method:  "POST",
-      headers: getAuthHeaders(),
-      body:    JSON.stringify({ session_id: sessionId }),
-    });
-    const data = await res.json();
-
-    if (data.error) {
-      resultsListEl.innerHTML = `<div style="color:#ef4444;font-size:0.82rem">${escHtml(data.error)}</div>`;
-      appendBotMessage("추천 중 오류가 발생했어요: " + data.error);
-      return;
-    }
-
-    renderResults(data.results);
-    appendBotMessage(
-      `추천이 완료됐어요! 오른쪽 패널에서 결과를 확인해 주세요.\n` +
-      `총 ${data.results.length}개 매물을 추천드려요 🏠`
-    );
-  } catch (err) {
-    resultsListEl.innerHTML = `<div style="color:#ef4444;font-size:0.82rem">서버 오류</div>`;
-    console.error(err);
-  }
+// ── 추천 결과 페이지로 이동 ──────────────────────────────
+function scrollToResults() {
+  location.href = "/recommendation";
 }
 
-function scrollToResults() {
-  resultsSectionEl.scrollIntoView({ behavior: "smooth" });
+// 검색 조건 칩 localStorage 저장 (추천 페이지 요약 바용)
+function saveCondChips(slots) {
+  if (!slots) return;
+  const map = {};
+  slots.forEach(s => { if (s.filled) map[s.key] = s.value; });
+  const chips = [];
+  if (map.work_address)  chips.push("📍 " + map.work_address);
+  if (map.rent_type === "월세" && map.monthly_manwon) {
+    chips.push("💰 월세 " + map.monthly_manwon + "만원");
+  } else if (map.deposit_manwon) {
+    chips.push("💰 전세 " + Number(map.deposit_manwon).toLocaleString() + "만원");
+  }
+  if (map.allowed_minutes) chips.push("🕐 통근 " + map.allowed_minutes + "분 이내");
+  if (map.transport_mode)  chips.push("🚌 " + (map.transport_mode === "car" ? "자가용" : "대중교통"));
+  if (map.vibe)            chips.push("🏘 " + map.vibe);
+  if (map.use_youth_policy === true || map.use_youth_policy === "true") chips.push("📋 청년정책 반영");
+  localStorage.setItem("rec_cond_chips", JSON.stringify(chips));
+}
+
+// 사이드바 "주거 추천" 메뉴 활성화
+function enableRecNav() {
+  const navRec   = document.getElementById("nav-rec");
+  const navBadge = document.getElementById("nav-rec-badge");
+  if (navRec) {
+    navRec.classList.remove("disabled");
+    navRec.href = "/recommendation";
+  }
+  if (navBadge) navBadge.style.display = "";
 }
 
 // ── 말풍선 ───────────────────────────────────────────────
@@ -300,33 +302,6 @@ function budgetLabel(map) {
   if (rt === "월세") return "월세";
   if (dep) return `전세 ${Number(dep).toLocaleString()}만원`;
   return rt || null;
-}
-
-// ── 추천 결과 렌더링 ─────────────────────────────────────
-function renderResults(results) {
-  if (!results || !results.length) {
-    resultsListEl.innerHTML = `<p style="font-size:0.82rem;color:#999">결과 없음</p>`;
-    return;
-  }
-  resultsListEl.innerHTML = results.map((r, i) => {
-    const tags = [
-      r.house_type,
-      `통근 ${r.commute_min}분`,
-      `${Math.round(r.price_manwon / 100)}백만원`,
-      r.infra_score != null ? `인프라 ${parseFloat(r.infra_score).toFixed(0)}점` : null,
-      r.policy_score && parseFloat(r.policy_score) > 0 ? `정책 ${parseFloat(r.policy_score).toFixed(0)}점` : null,
-    ].filter(Boolean);
-
-    return `
-      <div class="result-card">
-        <div class="result-rank">#${i + 1}</div>
-        <div class="result-loc">${escHtml(r.gu)} ${escHtml(r.dong)}</div>
-        <div class="result-tags">
-          ${tags.map(t => `<span class="result-tag">${escHtml(t)}</span>`).join("")}
-        </div>
-      </div>
-    `;
-  }).join("");
 }
 
 // ── 유틸 ─────────────────────────────────────────────────

@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>집찾봇 — 주거 추천 결과</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+<div id="app-rec">
+
+  <!-- ══ 사이드바 ══════════════════════════════════════ -->
+  <nav id="sidebar">
+    <div class="sidebar-brand">
+      <div class="brand-icon">🏠</div>
+      <div class="brand-text">
+        <div class="brand-name">집찾봇</div>
+        <div class="brand-sub">청년 주거 추천</div>
+      </div>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-label">메인</div>
+      <a class="nav-item" href="/">
+        <span class="nav-left"><span class="nav-icon">💬</span> 챗봇으로 찾기</span>
+      </a>
+      <a class="nav-item active" href="/recommendation">
+        <span class="nav-left"><span class="nav-icon">🏠</span> 주거 추천</span>
+        <span class="nav-badge" id="rec-count-badge"></span>
+      </a>
+      <a class="nav-item disabled" href="#">
+        <span class="nav-left"><span class="nav-icon">🗺️</span> 지도뷰</span>
+      </a>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-label">도구</div>
+      <a class="nav-item disabled" href="#">
+        <span class="nav-left"><span class="nav-icon">📋</span> 이사 체크리스트</span>
+      </a>
+      <a class="nav-item disabled" href="#">
+        <span class="nav-left"><span class="nav-icon">💸</span> 예상 생활비</span>
+      </a>
+    </div>
+
+    <div id="rec-conditions-sidebar" style="display:none">
+      <div class="sidebar-label">검색 조건</div>
+      <div id="rec-cond-chips"></div>
+    </div>
+
+    <div class="sidebar-bottom">
+      <div class="sidebar-label">계정</div>
+      <a class="nav-item disabled" href="#"><span class="nav-left"><span class="nav-icon">👤</span> 내 정보</span></a>
+      <a class="nav-item" href="#" onclick="handleLogout(event)"><span class="nav-left"><span class="nav-icon">🚪</span> 로그아웃</span></a>
+      <div class="user-chip">
+        <div class="user-avatar">🐻</div>
+        <div>
+          <div class="user-name" id="sidebar-username">사용자님</div>
+          <div class="user-sub">청년 주거 탐색 중</div>
+        </div>
+      </div>
+    </div>
+  </nav>
+
+  <!-- ══ 추천 결과 메인 ══════════════════════════════════ -->
+  <main id="rec-main">
+
+    <!-- 페이지 헤더 -->
+    <div id="rec-page-header">
+      <div id="rec-page-title-wrap">
+        <h1 id="rec-page-title">주거 추천 결과</h1>
+        <span id="rec-page-subtitle">최적의 동네를 찾았어요</span>
+      </div>
+      <a class="rec-back-btn" href="/">← 챗봇으로 돌아가기</a>
+    </div>
+
+    <!-- 로딩 -->
+    <div id="rec-loading">
+      <div class="spinner" style="width:36px;height:36px;border-width:4px"></div>
+      <p>최적의 주거지를 계산하고 있어요…</p>
+    </div>
+
+    <!-- 오류 -->
+    <div id="rec-error" style="display:none">
+      <div class="rec-empty-icon">⚠️</div>
+      <p id="rec-error-msg">오류가 발생했어요.</p>
+      <a href="/" class="rec-retry-btn">챗봇으로 돌아가기</a>
+    </div>
+
+    <!-- 세션 없음 -->
+    <div id="rec-no-session" style="display:none">
+      <div class="rec-empty-icon">💬</div>
+      <p>아직 검색 조건이 없어요.<br>챗봇에서 조건을 입력하면 추천 결과가 여기에 나타나요.</p>
+      <a href="/" class="rec-retry-btn">챗봇으로 찾기</a>
+    </div>
+
+    <!-- 결과 -->
+    <div id="rec-results" style="display:none">
+
+      <!-- 검색 조건 요약 바 -->
+      <div id="rec-summary-bar"></div>
+
+      <!-- 결과 카드 그리드 -->
+      <div id="rec-cards"></div>
+
+      <!-- 서울 평균 비교 -->
+      <div id="rec-avg-section" style="display:none">
+        <div class="rec-avg-chip">📊 서울 평균 대비 비교</div>
+        <div id="rec-avg-content"></div>
+      </div>
+
+    </div>
+  </main>
+
+</div>
+
+<script>
+  // 인증 확인
+  (function() {
+    if (!localStorage.getItem('token')) {
+      location.href = '/login';
+      return;
+    }
+    const nick = localStorage.getItem('nickname');
+    if (nick) {
+      document.addEventListener('DOMContentLoaded', function() {
+        const el = document.getElementById('sidebar-username');
+        if (el) el.textContent = nick + '님';
+      });
+    }
+  })();
+
+  function handleLogout(e) {
+    e.preventDefault();
+    localStorage.removeItem('token');
+    localStorage.removeItem('nickname');
+    location.href = '/login';
+  }
+</script>
+<script src="/static/recommendation.js"></script>
+</body>
+</html>

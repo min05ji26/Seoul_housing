@@ -426,3 +426,298 @@ html, body { height: 100%; font-family: var(--font); background: var(--bg-card);
   #quick-options { padding: 0 16px 12px; }
   .bubble { max-width: 90%; }
 }
+
+/* ══════════════════════════════════════════════════════
+   주거 추천 결과 페이지 (#app-rec)
+══════════════════════════════════════════════════════ */
+#app-rec {
+  display: grid;
+  grid-template-columns: var(--sidebar-w) 1fr;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ── 추천 메인 영역 ─────────────────────────────────── */
+#rec-main {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+/* 페이지 헤더 */
+#rec-page-header {
+  height: 72px;
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--border);
+  padding: 0 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+#rec-page-title-wrap { display: flex; align-items: baseline; gap: 10px; }
+#rec-page-title      { font-size: 20px; font-weight: 900; }
+#rec-page-subtitle   { font-size: 13px; color: var(--fg-secondary); }
+
+.rec-back-btn {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg-secondary);
+  text-decoration: none;
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  transition: all 0.15s;
+}
+.rec-back-btn:hover { background: var(--bg); color: var(--fg); }
+
+/* 로딩·에러·세션없음 공통 */
+#rec-loading,
+#rec-error,
+#rec-no-session {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  color: var(--fg-secondary);
+  font-size: 15px;
+  text-align: center;
+  line-height: 1.6;
+}
+.rec-empty-icon { font-size: 48px; }
+.rec-retry-btn {
+  display: inline-block;
+  margin-top: 8px;
+  background: var(--green);
+  color: white;
+  border-radius: 10px;
+  padding: 10px 22px;
+  font-size: 14px;
+  font-weight: 700;
+  text-decoration: none;
+  transition: background 0.15s;
+}
+.rec-retry-btn:hover { background: var(--green-dark); }
+
+/* 결과 영역 스크롤 */
+#rec-results {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px 32px 40px;
+}
+
+/* ── 검색 조건 요약 바 ──────────────────────────────── */
+#rec-summary-bar {
+  margin-bottom: 20px;
+}
+.rec-summary-inner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px 18px;
+  flex-wrap: wrap;
+}
+.rec-summary-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--fg-secondary);
+  white-space: nowrap;
+}
+.rec-summary-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: 1;
+}
+.rec-summary-chip {
+  background: var(--green-light);
+  color: var(--green);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 20px;
+}
+.rec-rerun-btn {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg-secondary);
+  text-decoration: none;
+  white-space: nowrap;
+  transition: color 0.15s;
+}
+.rec-rerun-btn:hover { color: var(--green); }
+
+/* ── 결과 카드 그리드 ──────────────────────────────── */
+#rec-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.rec-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  transition: box-shadow 0.15s, transform 0.15s;
+}
+.rec-card:hover {
+  box-shadow: 0 4px 20px rgba(62, 207, 142, 0.12);
+  transform: translateY(-2px);
+}
+
+/* 카드 상단: 순위 + 위치 + 종합점수 */
+.rec-card-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.rec-rank-badge {
+  min-width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-size: 13px;
+  font-weight: 800;
+  flex-shrink: 0;
+}
+.rec-card-loc-wrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.rec-card-loc {
+  font-size: 17px;
+  font-weight: 800;
+  color: var(--fg);
+  line-height: 1.2;
+}
+.rec-type-tag {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--fg-secondary);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px 7px;
+  align-self: flex-start;
+}
+.rec-total-score {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  flex-shrink: 0;
+}
+.rec-score-num  { font-size: 24px; font-weight: 900; color: var(--green); line-height: 1; }
+.rec-score-unit { font-size: 11px; color: var(--fg-secondary); }
+
+/* 통근·가격 통계 행 */
+.rec-card-stats {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  background: var(--bg);
+  border-radius: 10px;
+  padding: 10px 14px;
+}
+.rec-stat {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.rec-stat-icon  { font-size: 16px; }
+.rec-stat-label { font-size: 12px; color: var(--fg-secondary); }
+.rec-stat-val   { font-size: 14px; font-weight: 700; color: var(--fg); margin-left: auto; }
+.rec-stat-divider {
+  width: 1px;
+  height: 24px;
+  background: var(--border);
+  margin: 0 14px;
+  flex-shrink: 0;
+}
+
+/* 점수 바 */
+.rec-score-bars { display: flex; flex-direction: column; gap: 7px; }
+.rec-score-row  {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.rec-score-label {
+  font-size: 11px;
+  color: var(--fg-secondary);
+  width: 46px;
+  flex-shrink: 0;
+}
+.rec-bar-track {
+  flex: 1;
+  height: 6px;
+  background: var(--bg);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.rec-bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.6s ease;
+}
+.rec-score-pct {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--fg-secondary);
+  width: 24px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+/* ── 서울 평균 비교 섹션 ────────────────────────────── */
+#rec-avg-section {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.rec-avg-chip {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--fg-secondary);
+}
+.rec-avg-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+  flex-wrap: wrap;
+}
+.rec-avg-label  { font-weight: 600; min-width: 80px; }
+.rec-avg-good   { color: var(--green); font-weight: 700; }
+.rec-avg-bad    { color: #ef4444;      font-weight: 700; }
+
+/* ── 추천 페이지 반응형 ─────────────────────────────── */
+@media (max-width: 768px) {
+  #app-rec { grid-template-columns: 1fr; }
+  #app-rec #sidebar { display: none; }
+  #rec-results { padding: 16px; }
+  #rec-page-header { padding: 0 16px; }
+  #rec-cards { grid-template-columns: 1fr; }
+}
