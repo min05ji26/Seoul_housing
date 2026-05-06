@@ -426,6 +426,74 @@ class ChatBot:
             return "n"
         return None
 
+    # ── 잡담/인사 감지 ─────────────────────────────────────
+
+    # 인사말 패턴
+    _GREET_RE = re.compile(
+        r"^(안녕|하이|hello|hi|헬로|ㅎㅇ|ㅎㅎ|방가|반가|반갑|반겨|좋은\s*(아침|오전|오후|저녁|밤|하루)|잘\s*부탁|처음\s*뵙)",
+        re.I,
+    )
+    # 감사 패턴
+    _THANKS_RE = re.compile(r"^(감사|고마워|고맙|수고|ㄳ|땡큐|thanks|thank)", re.I)
+    # 도움 요청/모르겠다 패턴
+    _HELP_RE = re.compile(
+        r"^(뭘|뭐|어떻게|어떡|모르|모르겠|어디서|어떤\s*정보|도움|도와|설명|알려줘|알려주세요|어디\s*적)",
+        re.I,
+    )
+    # 처음부터 / 다시 패턴
+    _RESTART_RE = re.compile(r"^(처음|다시|새로\s*시작|리셋|초기화)", re.I)
+    # 잘 지내요/요즘 어때 등 안부 패턴
+    _CHITCHAT_RE = re.compile(
+        r"^(잘\s*지내|잘\s*있|날씨|심심|배고|피곤|힘들|바빠|뭐\s*해|뭐해|어때|요즘)",
+        re.I,
+    )
+    # 집/이사 관련 의지 표현 (슬롯 질문으로 자연 연결)
+    _HOUSING_INTENT_RE = re.compile(
+        r"(집\s*(구하|찾|보)|이사|방\s*(구하|찾|보)|주거|살\s*곳|거주|전세|월세)",
+        re.I,
+    )
+
+    def _detect_small_talk(self, text: str) -> Optional[str]:
+        """
+        인사/잡담 감지 → 자연스러운 응답 문자열 반환.
+        잡담이 아니면 None.
+        슬롯이 절반 이상 채워진 상태라면 잡담 감지 비활성화 (흐름 방해 방지).
+        """
+        t = text.strip()
+        # 슬롯이 3개 이상 채워진 중간 대화라면 잡담 처리 건너뜀
+        filled_count = sum(1 for v in self.slots.values() if v is not None)
+        if filled_count >= 3:
+            return None
+        # 집 찾기 의도가 있으면 잡담 아님
+        if self._HOUSING_INTENT_RE.search(t) and len(t) > 3:
+            return None
+
+        if self._GREET_RE.search(t):
+            greets = [
+                "안녕하세요! 😊 반갑습니다.",
+                "안녕하세요! 🏠 잘 오셨어요.",
+                "반갑습니다! 😊 집 찾는 걸 도와드릴게요.",
+            ]
+            import random
+            return random.choice(greets)
+
+        if self._THANKS_RE.search(t):
+            return "천만에요 😊 계속 진행해 볼까요?"
+
+        if self._RESTART_RE.search(t):
+            return "처음부터 다시 시작하려면 페이지를 새로고침(F5)해 주세요! 🔄"
+
+        if self._HELP_RE.search(t):
+            return (
+                "몇 가지 질문에 답해주시면 서울 내 최적 주거지를 추천해드려요 🏠\n"
+                "직장 주소, 예산, 통근 시간 등을 순서대로 여쭤볼게요!"
+            )
+
+        if self._CHITCHAT_RE.search(t):
+            return "저는 항상 열심히 집을 찾고 있어요 🏠😄 주거지 추천을 도와드릴게요!"
+
+        return None
+
     # ── 메인 process() ─────────────────────────────────────
 
     def process(self, user_text: str):
@@ -435,6 +503,17 @@ class ChatBot:
         self.turn += 1
         if self.turn > self.MAX_TURNS:
             return "대화 한도를 초과했습니다. 새로 시작해 주세요.", False, None
+
+        # ── 잡담/인사 감지 ─────────────────────────────────
+        small_talk = self._detect_small_talk(user_text)
+        if small_talk:
+            # 다음에 물어볼 슬롯 질문과 자연스럽게 연결
+            missing = self._missing_required()
+            if missing:
+                next_q = SLOT_QUESTIONS[missing[0]]
+                self._last_asked_slot = missing[0]
+                return f"{small_talk}\n\n{next_q}", False, None
+            return small_talk, False, None
 
         # LLM 슬롯 추출
         new_slots = extract_slots_from_text(user_text, self.slots)
