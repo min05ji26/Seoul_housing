@@ -226,12 +226,49 @@
 - 학력: `"고졸이하"` / `"대학재학"` / `"대졸"` / `"석박사"` (youth_policy_module.py `_EDU_ORDER` 키와 일치)
 - 카카오 로그인 사용자 / 기존 회원은 두 컬럼 NULL → 단계 2에서 챗봇이 청년정책 진입 시 물어볼 예정
 
-**다음 단계 (미착수)**
-- 단계 2: 챗봇 청년정책 흐름 개편 (공통 자격 1차 필터 → 정책 카드 표시 → 사용자 선택 → 추가 조건만 묻기)
-  - `nlp_input_module.py`의 `POLICY_DETAIL_ORDER`, `_ask_policy_xxx` 등 변경 예정
-  - user_meta.employment/education → policy 1차 필터에 활용 예정
+**git 커밋**: `dd8b0dc` — feat: signup form - add employment and education fields
 
-**git 커밋**: (이번 세션 커밋 예정)
+---
+
+### 청년정책 흐름 개편 2단계 — 시노님 매핑 + 카드 선택 플로우 (2026-05-06 6차)
+
+#### 2-1: youth_policy_module.py 업그레이드
+
+| 변경 | 내용 |
+|------|------|
+| `EMPLOYMENT_SYNONYMS` | 취업자/미취업자/자영업자 → 정책 텍스트 표현 확장 매핑 |
+| `_syn_match()` | 한글 음절 경계 regex (`(?<![가-힣])syn(?![가-힣])`) — "취업자" in "미취업자" false positive 방지 |
+| `_check_employment()` | 시노님 매핑 + 음절 경계 매칭으로 재작성 |
+| `_classify_conflict()` | 정책별 충돌 레벨 (strict/same_type/none) 라벨링 |
+| `validate_policy_selection()` | 사용자 선택 정책 충돌 검증 |
+| `fetch_candidates_basic()` | 1차 필터 (나이/취업/학력/주거관련/절감액>0), 소득·혼인·무주택은 미검증 |
+
+**git 커밋**: `0ae3553`
+
+#### 2-2: nlp_input_module.py + webapp/main.py 챗봇 플로우 개편
+
+**새 청년정책 흐름 (방식 B)**:
+1. `use_youth_policy=True` → user_meta에서 employment/education 자동 채움
+2. 비어있으면 챗봇이 묻기 (카카오/기존 회원)
+3. `fetch_candidates_basic()` 호출 → candidate_policies 슬롯
+4. 카드 표시 (텍스트 + policy_cards JSON 필드)
+5. 번호 선택 → `validate_policy_selection()` 충돌 검증
+6. 선택 정책이 요구하는 조건(income/marriage/no_house)만 차례대로 묻기
+
+**새 인스턴스 변수**: `_selection_error`, `policy_cards`, `has_more_policy_cards`
+
+**새 헬퍼 메서드**: `_extract_work_gu()`, `_compute_required_conditions()`, `_build_card_message()`
+
+**get_v5_params()**: user_meta.employment/education 우선, selected_policies 전달
+
+**/api/chat 응답 추가 필드**: `policy_cards`, `has_more_cards`, `selection_error`
+
+**employment 3분류 통일**: 챗봇 질문·quick_options 모두 취업자/미취업자/자영업자로 통일
+
+**git 커밋**: `a909735`
+
+**다음 단계 (미착수)**
+- 단계 3: 프론트엔드 카드 UI (app.js에서 policy_cards를 챗봇 버블 안에 카드 형태로 렌더링)
 
 ---
 
@@ -506,6 +543,7 @@ Claude Code 새 세션에서:
 - **청년정책 흐름 연결**: JWT 나이/성별 + 챗봇 5개 슬롯(취업·소득·혼인·학력·무주택) → youth_policy_module 실 데이터 연결. 하드코딩 더미 완전 제거.
 - **소소한 대화(small talk) 지원**: 안녕·감사·도움·재시작·잡담 등 자연어 인사 처리. 슬롯 3개 이상 채워진 상태에서는 자동 비활성화.
 - **청년정책 흐름 개편 1단계**: 회원가입 폼에 취업상태(3종)·학력(4종) 라디오 버튼 추가. JWT에 employment/education 포함. bot.user_meta에 두 필드 주입.
+- **청년정책 흐름 개편 2단계**: 시노님 매핑(음절 경계 regex) + 카드 선택 플로우. user_meta 자동 채우기. policy_cards API 필드 추가.
 
 **🔄 권장 추가 작업 (시간 여유 시)**
 - **회원가입 설계 메모 권장사항 반영**:
