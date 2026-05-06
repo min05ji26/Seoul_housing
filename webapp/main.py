@@ -207,15 +207,34 @@ def _df_to_list(df) -> list:
         score = (row.get("final_score")
                  or row.get("topsis_score")
                  or 0)
+        # policy_matched: 매칭된 청년정책 목록 → 프론트 카드에 표시
+        raw_pm = row.get("policy_matched")
+        policy_matched = []
+        if isinstance(raw_pm, list):
+            for p in raw_pm[:3]:  # 최대 3개
+                if not isinstance(p, dict):
+                    continue
+                name = p.get("plcyNm", "")
+                if not name:
+                    continue
+                policy_matched.append({
+                    "name":    name,
+                    "saving":  round(float(p.get("_monthly_saving", 0))),
+                    "benefit": p.get("_benefit_desc", ""),
+                    "url":     p.get("plcyUrlAddr", "") or p.get("polyBizSjnm", ""),
+                    "dup":     bool(p.get("_dup_limit", False)),
+                })
+
         rows.append({
-            "gu":          str(row.get("시군구_2") or row.get("gu") or ""),
-            "dong":        str(row.get("읍면동")   or row.get("dong") or ""),
-            "house_type":  str(row.get("housing_type") or row.get("주택유형") or ""),
-            "score":       round(float(score), 4),
-            "price_manwon": int(float(price)),
-            "commute_min": int(round(float(commute))),
-            "infra_score": row.get("infra_score"),
-            "policy_score": row.get("policy_score"),
+            "gu":            str(row.get("시군구_2") or row.get("gu") or ""),
+            "dong":          str(row.get("읍면동")   or row.get("dong") or ""),
+            "house_type":    str(row.get("housing_type") or row.get("주택유형") or ""),
+            "score":         round(float(score), 4),
+            "price_manwon":  int(float(price)),
+            "commute_min":   int(round(float(commute))),
+            "infra_score":   row.get("infra_score"),
+            "policy_score":  row.get("policy_score"),
+            "policy_matched": policy_matched,
         })
     return rows
 

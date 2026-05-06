@@ -128,6 +128,10 @@ function renderCard(r, i) {
   const rankColors = { 1: "#3ECF8E", 2: "#60a5fa", 3: "#f59e0b" };
   const rankColor  = rankColors[rank] || "#9CA3AF";
 
+  // 청년정책 매칭 섹션
+  const policies   = Array.isArray(r.policy_matched) ? r.policy_matched : [];
+  const policyHtml = policies.length > 0 ? renderPolicies(policies) : "";
+
   return `
     <div class="rec-card" data-rank="${rank}">
       <div class="rec-card-top">
@@ -180,6 +184,43 @@ function renderCard(r, i) {
           </div>
           <span class="rec-score-pct">${policyPct}</span>
         </div>` : ""}
+      </div>
+
+      ${policyHtml}
+    </div>
+  `;
+}
+
+// ── 청년정책 목록 렌더링 ─────────────────────────────────
+function renderPolicies(policies) {
+  const items = policies.map(p => {
+    const savingText = p.saving > 0 ? `월 약 ${p.saving}만원 절감` : "";
+    const dupBadge   = p.dup ? `<span class="rec-policy-dup">중복제한</span>` : "";
+    const linkAttr   = p.url ? `href="${escHtml(p.url)}" target="_blank" rel="noopener"` : "";
+    const nameHtml   = p.url
+      ? `<a class="rec-policy-name" ${linkAttr}>${escHtml(p.name)} ↗</a>`
+      : `<span class="rec-policy-name">${escHtml(p.name)}</span>`;
+
+    return `
+      <div class="rec-policy-item">
+        <div class="rec-policy-top">
+          ${nameHtml}
+          ${dupBadge}
+        </div>
+        ${p.benefit ? `<div class="rec-policy-desc">${escHtml(p.benefit)}</div>` : ""}
+        ${savingText ? `<div class="rec-policy-saving">💰 ${escHtml(savingText)}</div>` : ""}
+      </div>
+    `;
+  }).join("");
+
+  return `
+    <div class="rec-policy-section">
+      <div class="rec-policy-header">
+        <span class="rec-policy-icon">📋</span>
+        <span>매칭된 청년정책 ${policies.length}건</span>
+      </div>
+      <div class="rec-policy-list">
+        ${items}
       </div>
     </div>
   `;

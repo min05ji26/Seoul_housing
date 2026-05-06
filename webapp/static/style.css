@@ -687,6 +687,70 @@ html, body { height: 100%; font-family: var(--font); background: var(--bg-card);
   flex-shrink: 0;
 }
 
+/* ── 청년정책 매칭 섹션 (카드 내부) ────────────────── */
+.rec-policy-section {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.rec-policy-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #f59e0b;
+}
+.rec-policy-icon { font-size: 14px; }
+
+.rec-policy-list { display: flex; flex-direction: column; gap: 8px; }
+
+.rec-policy-item {
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.rec-policy-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.rec-policy-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--fg);
+  text-decoration: none;
+  line-height: 1.3;
+}
+a.rec-policy-name:hover { color: #f59e0b; text-decoration: underline; }
+
+.rec-policy-dup {
+  font-size: 10px;
+  font-weight: 700;
+  color: #ef4444;
+  background: #fee2e2;
+  border-radius: 4px;
+  padding: 1px 5px;
+  flex-shrink: 0;
+}
+.rec-policy-desc {
+  font-size: 11px;
+  color: var(--fg-secondary);
+  line-height: 1.4;
+}
+.rec-policy-saving {
+  font-size: 12px;
+  font-weight: 600;
+  color: #d97706;
+}
+
 /* ── 서울 평균 비교 섹션 ────────────────────────────── */
 #rec-avg-section {
   background: var(--bg-card);
