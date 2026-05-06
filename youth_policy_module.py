@@ -88,6 +88,25 @@ DUP_LIMIT_KEYWORDS = [
     "중복 수혜 제한", "중복지원 제한",
 ]
 
+# ── 취업상태 시노님 매핑 ───────────────────────────────
+# 회원가입 저장값("취업자"/"미취업자"/"자영업자")을 정책 텍스트의
+# 다양한 표현으로 확장 매핑
+EMPLOYMENT_SYNONYMS: Dict[str, List[str]] = {
+    "취업자":   ["취업자", "재직자", "근로자", "직장인",
+                 "취업", "근로", "프리랜서", "재직"],
+    "미취업자": ["미취업자", "미취업", "구직", "취업준비",
+                 "취준", "일경험없음", "백수"],
+    "자영업자": ["자영업자", "자영업", "개인사업자", "개인사업", "사업자", "창업"],
+}
+
+# ── 중복 수혜 충돌 카테고리 규칙 ─────────────────────
+CATEGORY_CONFLICT_RULES: Dict[str, str] = {
+    "공공임대":  "strict",     # 모든 주거 정책과 충돌
+    "월세지원":  "same_type",  # 월세지원끼리 충돌
+    "보증금지원": "same_type", # 보증금/대출끼리 충돌
+    "기타":      "none",       # 충돌 없음
+}
+
 # 산식 신뢰도 표시
 _BENEFIT_RELIABILITY: Dict[str, str] = {
     "월세보조":  "★★★ 정책 공고문 명시 금액",
@@ -257,6 +276,16 @@ def _check_age(p: dict, user_age: str) -> bool:
         return True
 
 
+def _syn_match(syn: str, text: str) -> bool:
+    """한국어 텍스트에서 시노님을 음절 경계로 매칭.
+    앞뒤가 한글 음절([가-힣])이면 부분 단어이므로 불매칭.
+    예) '취업자' in '미취업자' → False  (앞이 '미'로 한글 음절)
+        '취업자' in '취업자 대상' → True  (앞이 문자열 시작)
+    """
+    pattern = f"(?<![가-힣]){re.escape(syn)}(?![가-힣])"
+    return bool(re.search(pattern, text))
+
+
 def _check_employment(p: dict, user_emp: str) -> bool:
     if not user_emp:
         return True
@@ -264,7 +293,18 @@ def _check_employment(p: dict, user_emp: str) -> bool:
     if not job_cd:
         return True
     text = _extract_policy_text(p)
-    return user_emp in text or "전체" in text or "제한없음" in text
+
+    # "전체"/"제한없음"이면 무조건 통과
+    if "전체" in text or "제한없음" in text:
+        return True
+
+    # 시노님 매핑으로 확장 매칭 (음절 경계 기반)
+    synonyms = EMPLOYMENT_SYNONYMS.get(user_emp, [user_emp])
+    for syn in synonyms:
+        if _syn_match(syn, text):
+            return True
+
+    return False
 
 
 def _check_income(p: dict, user_income_manwon: str) -> bool:
@@ -360,6 +400,138 @@ def _auto_match_labels(p: dict, user_info: Dict[str, str]) -> str:
     if not labels:
         return ""
     return "✅ " + " · ".join(labels) + " 자동매칭"
+
+
+# ──────────────────────────────────────────────────────────
+# 충돌 라벨링 + 선택 검증
+# ──────────────────────────────────────────────────────────
+def _classify_conflict(policy: dict, benefit_type: str) -> dict:
+    """정책의 중복 수혜 충돌 카테고리 분류.
+
+    Returns: {
+        "level": "strict" | "same_type" | "none",
+        "label": str,
+        "warning_text": str,
+    }
+    """
+    level = CATEGORY_CONFLICT_RULES.get(benefit_type, "none")
+
+    # 텍스트에 중복 불가 키워드가 명시돼 있으면 same_type 격상
+    if level == "none" and detect_dup_limit(policy):
+        level = "same_type"
+
+    warning_map = {
+        "strict":    "* 입주 시 다른 주거 정책 동시 신청 불가",
+        "same_type": f"* 동일 유형({benefit_type}) 정책끼리 중복 불가",
+        "none":      "",
+    }
+    return {
+        "level":        level,
+        "label":        benefit_type,
+        "warning_text": warning_map.get(level, ""),
+    }
+
+
+def validate_policy_selection(selected_policies: List[dict]) -> dict:
+    """사용자가 선택한 정책들의 충돌 검증.
+
+    Returns: {"valid": bool, "error": str | None}
+    """
+    if not selected_policies:
+        return {"valid": True, "error": None}
+
+    # strict 정책이 있고 다른 정책도 있으면 충돌
+    strict_policies = [
+        p for p in selected_policies
+        if p.get("_conflict_label", {}).get("level") == "strict"
+    ]
+    if strict_policies and len(selected_policies) > 1:
+        names = [p.get("plcyNm", "") for p in strict_policies]
+        return {
+            "valid": False,
+            "error": f"{', '.join(names)}은(는) 다른 주거 정책과 동시 신청이 불가합니다.",
+        }
+
+    # 같은 same_type 카테고리 정책이 2개 이상이면 충돌
+    by_label: Dict[str, list] = {}
+    for p in selected_policies:
+        cl = p.get("_conflict_label", {})
+        if cl.get("level") == "same_type":
+            by_label.setdefault(cl.get("label", ""), []).append(p)
+
+    for label, policies in by_label.items():
+        if len(policies) >= 2:
+            names = [p.get("plcyNm", "") for p in policies]
+            return {
+                "valid": False,
+                "error": f"{label} 정책 ({', '.join(names)}) 중 하나만 선택 가능합니다.",
+            }
+
+    return {"valid": True, "error": None}
+
+
+# ──────────────────────────────────────────────────────────
+# 1차 필터링 (챗봇용) — 소득/혼인/무주택은 검증 안 함
+# ──────────────────────────────────────────────────────────
+def fetch_candidates_basic(
+    user_info: Dict[str, str],
+    gu_name: str,
+) -> List[dict]:
+    """
+    1차 필터링: 나이/취업/학력/지역/주거관련/절감액>0 만으로 후보 추출.
+    소득/혼인/무주택은 검증하지 않음 (사용자가 카드 선택 후 따로 받음).
+
+    Returns: 절감액 내림차순 정렬된 후보 정책 리스트.
+             각 정책에 _monthly_saving, _benefit_type, _benefit_desc,
+             _is_housing, _conflict_label 메타데이터 포함.
+    """
+    global _POLICY_CACHE
+
+    # 테스트 모드
+    source = MOCK_POLICIES if _TEST_MODE else None
+    if source is None:
+        if not _POLICY_CACHE:
+            _POLICY_CACHE = _fetch_all_policies(max_pages=5, page_size=50)
+        source = _POLICY_CACHE
+
+    candidates = []
+    for p in source:
+        if not _is_seoul_policy(p, gu_name):
+            continue
+        if not _check_age(p, user_info.get("age", "")):
+            continue
+        if not _check_employment(p, user_info.get("employment", "")):
+            continue
+        if not _check_education(p, user_info.get("education", "")):
+            continue
+        if not _is_housing_related(p):
+            continue
+
+        benefit = analyze_benefit(p, gu_name)
+        if benefit["monthly_saving"] <= 0:
+            continue
+
+        # 메타데이터 부착 (dict 원본 복사 후 수정)
+        p = dict(p)
+        p["_monthly_saving"]  = benefit["monthly_saving"]
+        p["_benefit_type"]    = benefit["benefit_type"]
+        p["_benefit_desc"]    = benefit["benefit_desc"]
+        p["_is_housing"]      = benefit["is_housing"]
+        p["_conflict_label"]  = _classify_conflict(p, benefit["benefit_type"])
+        p["_auto_match"]      = _auto_match_labels(p, user_info)
+        candidates.append(p)
+
+    # 절감액 순 정렬 + 정책명 중복 제거
+    candidates.sort(key=lambda x: x["_monthly_saving"], reverse=True)
+    seen: set = set()
+    deduped = []
+    for p in candidates:
+        nm = p.get("plcyNm", "")
+        if nm and nm not in seen:
+            seen.add(nm)
+            deduped.append(p)
+
+    return deduped
 
 
 # ──────────────────────────────────────────────────────────
