@@ -145,7 +145,9 @@ POLICY_SLOTS = [
 POLICY_QUESTIONS = {
     "policy_employment": (
         "취업 상태를 선택해 주세요.\n"
-        "① 재직자  ② 자영업자  ③ 미취업자  ④ 프리랜서  ⑤ 일경험없음"
+        "① 취업자 (회사 근무, 프리랜서 등)\n"
+        "② 미취업자 (구직 중, 일 경험 없음 등)\n"
+        "③ 자영업자 (사업자 등록자)"
     ),
     "policy_income": (
         "월 소득이 얼마인지 알려주세요.\n"
@@ -184,6 +186,10 @@ class ChatBot:
         self._done          = False
         self._last_asked_slot: Optional[str] = None  # 직전에 물어본 슬롯
         self.user_meta: Dict[str, str] = {}  # 로그인 유저 정보 (birth_date, gender, age, nickname)
+        # ── 청년정책 카드 플로우 상태 ──
+        self._selection_error: Optional[str] = None   # 카드 선택 충돌 오류
+        self.policy_cards: Optional[List[Dict]] = None # /api/chat 응답용 카드 데이터
+        self.has_more_policy_cards: bool = False       # "더보기" 가능 여부
 
     # ── 필수 슬롯 확인 ──────────────────────────────────────
 
@@ -243,12 +249,55 @@ class ChatBot:
             if self.slots.get("use_youth_policy") is None:
                 return "현재 조건에 맞는 청년정책도 같이 확인하시겠어요? (예 / 아니요)"
 
-        # 청년정책 세부 정보 수집 (use_youth_policy=True 선택 후 순서대로)
+        # 청년정책 카드 플로우 (use_youth_policy=True 후)
         if self.slots.get("use_youth_policy"):
-            for slot in POLICY_SLOTS:
-                if self.slots.get(slot) is None:
-                    self._last_asked_slot = slot
-                    return POLICY_QUESTIONS[slot]
+            # ── Step 1: employment/education 확보 ──────────────
+            # user_meta 우선, 없으면 슬롯에서, 그래도 없으면 챗봇이 묻기
+            emp = (self.user_meta.get("employment", "") or "").strip() \
+                  or self.slots.get("policy_employment", "")
+            edu = (self.user_meta.get("education",  "") or "").strip() \
+                  or self.slots.get("policy_education", "")
+
+            # user_meta 값 자동으로 슬롯에 채우기 (1회성)
+            if emp and not self.slots.get("policy_employment"):
+                self.slots["policy_employment"] = emp
+            if edu and not self.slots.get("policy_education"):
+                self.slots["policy_education"] = edu
+
+            if not emp:
+                self._last_asked_slot = "policy_employment"
+                return POLICY_QUESTIONS["policy_employment"]
+            if not edu:
+                self._last_asked_slot = "policy_education"
+                return POLICY_QUESTIONS["policy_education"]
+
+            # ── Step 2: 1차 필터링 ─────────────────────────────
+            if self.slots.get("candidate_policies") is None:
+                gu = self._extract_work_gu()
+                try:
+                    from youth_policy_module import fetch_candidates_basic
+                    candidates = fetch_candidates_basic(
+                        {"age": self.user_meta.get("age", ""),
+                         "employment": emp, "education": edu},
+                        gu,
+                    )
+                except Exception as e:
+                    print(f"[정책 필터링 오류] {e}")
+                    candidates = []
+                self.slots["candidate_policies"] = candidates
+                self.slots["show_more_offset"] = 0
+
+            # ── Step 3: 카드 표시 + 선택 대기 ─────────────────
+            if self.slots.get("selected_policies") is None:
+                self._last_asked_slot = "policy_card_selection"
+                return "__show_cards__"
+
+            # ── Step 4: 추가 조건 묻기 ─────────────────────────
+            for cond in (self.slots.get("required_conditions") or []):
+                slot_key = f"policy_{cond}"
+                if self.slots.get(slot_key) is None:
+                    self._last_asked_slot = slot_key
+                    return POLICY_QUESTIONS.get(slot_key, "")
 
         return None  # 모든 슬롯 완료
 
@@ -378,17 +427,22 @@ class ChatBot:
 
     @classmethod
     def _parse_employment_choice(cls, text: str) -> Optional[str]:
+        """취업상태 파싱 → 3분류 정규화 (취업자/미취업자/자영업자)."""
+        # 1. 3분류 직접 입력
+        if re.search(r"자영업자|자영업|개인사업|사업자|창업", text):
+            return "자영업자"
+        if re.search(r"미취업자|미취업|구직|취업준비|취준|백수|일경험없|경험없", text):
+            return "미취업자"
+        if re.search(r"취업자|재직자|근로자|직장인|재직|근무|회사|프리랜서|프리", text):
+            return "취업자"
+        # 2. 번호 선택 (구 5분류 → 3분류 정규화)
+        _old_to_new = {
+            "재직자": "취업자", "프리랜서": "취업자", "일경험없음": "미취업자",
+            "미취업자": "미취업자", "자영업자": "자영업자",
+        }
         for k, v in cls._EMPLOYMENT_MAP.items():
             if k in text:
-                return v
-        if re.search(r"재직|직장|회사|근무", text):
-            return "재직자"
-        if re.search(r"자영|사업|프리랜서|프리", text):
-            return "프리랜서" if re.search(r"프리", text) else "자영업자"
-        if re.search(r"미취업|취업준비|구직|취준|백수", text):
-            return "미취업자"
-        if re.search(r"일경험|경험없", text):
-            return "일경험없음"
+                return _old_to_new.get(v, v)
         return None
 
     @classmethod
@@ -494,6 +548,92 @@ class ChatBot:
 
         return None
 
+    # ── 청년정책 카드 플로우 헬퍼 ─────────────────────────
+
+    def _extract_work_gu(self) -> str:
+        """work_address에서 구 이름 추출."""
+        addr = self.slots.get("work_address", "")
+        m = re.search(r"([가-힣]+구)", addr)
+        return m.group(1) if m else ""
+
+    def _compute_required_conditions(self, policies: list) -> list:
+        """선택 정책들이 요구하는 추가 조건 목록 산출 (income/marriage/no_house 순)."""
+        from youth_policy_module import _extract_policy_text
+        needs = {"income": False, "marriage": False, "no_house": False}
+        for p in policies:
+            earn_cd  = str(p.get("earnCndSeCd", "")).strip()
+            earn_max = str(p.get("earnMaxAmt",  "0")).strip()
+            mrg_cd   = str(p.get("mrgSttsCd",   "")).strip()
+            text     = _extract_policy_text(p)
+            if (earn_cd and earn_cd != "0043001") or (earn_max not in ("0", "", "None")):
+                needs["income"]   = True
+            if mrg_cd and mrg_cd not in ("", "0055003"):
+                needs["marriage"] = True
+            if "무주택" in text:
+                needs["no_house"] = True
+        return [k for k in ["income", "marriage", "no_house"] if needs[k]]
+
+    def _build_card_message(self) -> str:
+        """카드 표시 메시지 생성 + self.policy_cards / has_more_policy_cards 세팅."""
+        candidates = self.slots.get("candidate_policies", [])
+        offset     = self.slots.get("show_more_offset", 0)
+        page_size  = 5
+        start = offset * page_size
+        end   = start + page_size
+        page  = candidates[start:end]
+
+        # API 응답용 카드 데이터 세팅
+        self.has_more_policy_cards = len(candidates) > end
+        if page:
+            self.policy_cards = []
+            for i, p in enumerate(page, start + 1):
+                cl = p.get("_conflict_label", {})
+                self.policy_cards.append({
+                    "index":            i,
+                    "name":             p.get("plcyNm", ""),
+                    "description":      p.get("_benefit_desc", ""),
+                    "monthly_saving":   p.get("_monthly_saving", 0),
+                    "benefit_type":     p.get("_benefit_type", ""),
+                    "url":              p.get("refUrlAddr1", "") or p.get("aplyUrlAddr", ""),
+                    "auto_match_label": p.get("_auto_match", ""),
+                    "conflict_warning": cl.get("warning_text", ""),
+                    "conflict_level":   cl.get("level", "none"),
+                })
+        else:
+            self.policy_cards = []
+
+        if not page:
+            return (
+                "아쉽게도 현재 조건에 맞는 청년정책을 찾지 못했어요. "
+                "청년정책 없이 추천을 진행할게요."
+            )
+
+        lines = ["📋 내 조건에 맞는 청년정책이에요!\n"]
+        for i, p in enumerate(page, start + 1):
+            name    = p.get("plcyNm", "")
+            desc    = p.get("_benefit_desc", "")
+            saving  = p.get("_monthly_saving", 0)
+            cl      = p.get("_conflict_label", {})
+            warning = cl.get("warning_text", "")
+            url     = p.get("refUrlAddr1", "") or p.get("aplyUrlAddr", "")
+            auto_m  = p.get("_auto_match", "")
+            lines.append(f"[{i}] {name}")
+            if auto_m:
+                lines.append(f"  {auto_m}")  # auto_m 자체에 이미 ✅ 포함
+            lines.append(f"  혜택: {desc}")
+            lines.append(f"  💰 월 약 {saving:.0f}만원 절감 추정")
+            if warning:
+                lines.append(f"  ⚠️ {warning}")
+            if url:
+                lines.append(f"  🔗 {url}")
+            lines.append("")
+
+        if self.has_more_policy_cards:
+            lines.append(f"(외 {len(candidates) - end}건 더 있어요. '더보기' 입력 시 추가 표시)")
+        lines.append("원하시는 정책 번호를 선택해 주세요. (예: 1 또는 1,3)")
+        lines.append("정책이 없으면 '없음'을 입력해 주세요.")
+        return "\n".join(lines)
+
     # ── 메인 process() ─────────────────────────────────────
 
     def process(self, user_text: str):
@@ -571,6 +711,38 @@ class ChatBot:
                 if parsed is not None:
                     new_slots["policy_no_house"] = parsed
 
+            elif asked == "policy_card_selection":
+                # "더보기" 처리
+                if re.search(r"더\s*(보기|봐|줘|봐요)|다음|next", txt.lower()):
+                    candidates = self.slots.get("candidate_policies", [])
+                    curr_off   = self.slots.get("show_more_offset", 0)
+                    next_start = (curr_off + 1) * 5
+                    if next_start < len(candidates):
+                        self.slots["show_more_offset"] = curr_off + 1
+                # "없음" 처리 (정책 없이 진행)
+                elif re.search(r"^(없음|없어|없|패스|skip|건너|아니)$", txt.strip().lower()):
+                    self.slots["selected_policies"]  = []
+                    self.slots["required_conditions"] = []
+                    self._selection_error = None
+                else:
+                    # 번호 파싱 → 선택 검증
+                    nums = [int(n) for n in re.findall(r"\d+", txt)]
+                    candidates = self.slots.get("candidate_policies", [])
+                    selected = []
+                    for n in nums:
+                        idx = n - 1  # 1-based → 0-based
+                        if 0 <= idx < len(candidates):
+                            selected.append(candidates[idx])
+                    if selected:
+                        from youth_policy_module import validate_policy_selection
+                        result = validate_policy_selection(selected)
+                        if not result["valid"]:
+                            self._selection_error = result["error"]
+                        else:
+                            self.slots["selected_policies"]  = selected
+                            self.slots["required_conditions"] = self._compute_required_conditions(selected)
+                            self._selection_error = None
+
         # LLM이 추출한 work_address도 검증 (역명·건물명 거부)
         if new_slots.get("work_address") and self.slots.get("work_address") is None:
             valid, err = self._validate_work_address(new_slots["work_address"])
@@ -626,6 +798,32 @@ class ChatBot:
 
         # 다음 질문
         next_q = self._next_question()
+
+        # 카드 표시 처리
+        if next_q == "__show_cards__":
+            self.policy_cards = None  # 리셋 후 _build_card_message에서 세팅
+            card_msg = self._build_card_message()
+            candidates = self.slots.get("candidate_policies", [])
+            # 후보가 없으면 즉시 selected_policies=[] 로 셋 후 진행
+            if not candidates:
+                self.slots["selected_policies"]  = []
+                self.slots["required_conditions"] = []
+                self.policy_cards = []
+                # 다음 질문 재결정 (조건 묻기 or 완료)
+                next_q2 = self._next_question()
+                if next_q2 is None:
+                    if not self._is_slots_complete():
+                        miss = self._missing_required()
+                        return card_msg + "\n\n" + SLOT_QUESTIONS[miss[0]], False, None
+                    self._done = True
+                    return card_msg + "\n\n" + self._build_summary(), True, self.get_v5_params()
+                return card_msg + "\n\n" + next_q2, False, None
+            # 선택 오류가 있으면 메시지 앞에 붙이기
+            if self._selection_error:
+                err = self._selection_error
+                self._selection_error = None
+                return f"⚠️ {err}\n\n{card_msg}", False, None
+            return card_msg, False, None
 
         if next_q is not None:
             return next_q, False, None
@@ -723,15 +921,17 @@ class ChatBot:
 
         user_info = None
         if use_policy:
-            # JWT에서 나이 가져오기 (user_meta는 /api/chat 시 로그인 토큰에서 채워짐)
+            # user_meta(회원가입 정보) 우선, 없으면 챗봇 수집 슬롯 사용
             age_val = self.user_meta.get("age", "") or ""
             user_info = {
-                "age":          str(age_val),
-                "employment":   s.get("policy_employment", ""),
+                "age":           str(age_val),
+                "employment":    (self.user_meta.get("employment", "") or "").strip()
+                                 or s.get("policy_employment", ""),
+                "education":     (self.user_meta.get("education", "") or "").strip()
+                                 or s.get("policy_education", ""),
                 "income_manwon": s.get("policy_income", ""),
-                "marriage":     s.get("policy_marriage", ""),
-                "education":    s.get("policy_education", ""),
-                "no_house":     s.get("policy_no_house", "y"),
+                "marriage":      s.get("policy_marriage", ""),
+                "no_house":      s.get("policy_no_house", "y"),
             }
 
         return dict(
@@ -754,6 +954,7 @@ class ChatBot:
             monthly_rent_manwon = monthly_rent_manwon,
             chatbot_mode        = True,
             vibe_list           = vibe or None,
+            selected_policies   = s.get("selected_policies") or None,
         )
 
     # ── 슬롯 상태 (우측 패널용) ─────────────────────────────

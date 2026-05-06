@@ -143,12 +143,15 @@ async def chat(req: ChatRequest, request: Request):
     quick_options = _quick_options_for(missing[0] if missing else None, bot)
 
     return {
-        "session_id":   session_id,
-        "bot_message":  reply,
-        "slot_status":  slot_status,
+        "session_id":    session_id,
+        "bot_message":   reply,
+        "slot_status":   slot_status,
         "quick_options": quick_options,
-        "is_complete":  is_done,
-        "v5_params":    v5_params if is_done else None,
+        "is_complete":   is_done,
+        "v5_params":     v5_params if is_done else None,
+        "policy_cards":  bot.policy_cards,
+        "has_more_cards": bot.has_more_policy_cards,
+        "selection_error": bot._selection_error,
     }
 
 
@@ -281,12 +284,13 @@ def _quick_options_for(slot: Optional[str], bot: ChatBot) -> list:
         asked = bot._last_asked_slot
         if asked == "policy_employment" and bot.slots.get("policy_employment") is None:
             return [
-                {"label": "재직자",    "value": "① 재직자"},
-                {"label": "자영업자",  "value": "② 자영업자"},
-                {"label": "미취업자",  "value": "③ 미취업자"},
-                {"label": "프리랜서",  "value": "④ 프리랜서"},
-                {"label": "일경험없음","value": "⑤ 일경험없음"},
+                {"label": "취업자",    "value": "취업자"},
+                {"label": "미취업자",  "value": "미취업자"},
+                {"label": "자영업자",  "value": "자영업자"},
             ]
+        if asked == "policy_card_selection":
+            # 카드 선택 단계 — "없음" 버튼만 제공 (번호는 직접 입력)
+            return [{"label": "정책 없이 진행", "value": "없음"}]
         if asked == "policy_marriage" and bot.slots.get("policy_marriage") is None:
             return [{"label": "미혼", "value": "① 미혼"}, {"label": "기혼", "value": "② 기혼"}]
         if asked == "policy_education" and bot.slots.get("policy_education") is None:
