@@ -52,6 +52,10 @@ def init_db():
         cur.execute("ALTER TABLE users ADD COLUMN kakao_id TEXT")
     if not _column_exists(cur, "users", "updated_at"):
         cur.execute("ALTER TABLE users ADD COLUMN updated_at TEXT")
+    if not _column_exists(cur, "users", "employment"):
+        cur.execute("ALTER TABLE users ADD COLUMN employment TEXT")  # 취업상태
+    if not _column_exists(cur, "users", "education"):
+        cur.execute("ALTER TABLE users ADD COLUMN education TEXT")   # 학력
 
     # ── user_profile ──────────────────────────────────────
     cur.execute("""

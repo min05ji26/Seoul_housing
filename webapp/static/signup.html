@@ -62,6 +62,43 @@
         <button class="gender-btn" id="btn-F" onclick="selectGender('F')">여성</button>
       </div>
 
+      <label class="auth-label">취업상태 <span class="auth-required">*</span></label>
+      <p class="auth-hint">※ 청년정책 자격 확인에 사용됩니다</p>
+      <div class="radio-group" id="employment-group">
+        <label class="radio-item">
+          <input type="radio" name="employment" value="취업자" />
+          <span class="radio-label">취업자 <span class="radio-desc">(회사 근무, 프리랜서 등)</span></span>
+        </label>
+        <label class="radio-item">
+          <input type="radio" name="employment" value="미취업자" />
+          <span class="radio-label">미취업자 <span class="radio-desc">(구직 중, 일 경험 없음 등)</span></span>
+        </label>
+        <label class="radio-item">
+          <input type="radio" name="employment" value="자영업자" />
+          <span class="radio-label">자영업자 <span class="radio-desc">(사업자 등록자)</span></span>
+        </label>
+      </div>
+
+      <label class="auth-label">최종 학력 <span class="auth-required">*</span></label>
+      <div class="radio-group" id="education-group">
+        <label class="radio-item">
+          <input type="radio" name="education" value="고졸이하" />
+          <span class="radio-label">고졸 이하</span>
+        </label>
+        <label class="radio-item">
+          <input type="radio" name="education" value="대학재학" />
+          <span class="radio-label">대학 재학</span>
+        </label>
+        <label class="radio-item">
+          <input type="radio" name="education" value="대졸" />
+          <span class="radio-label">대학 졸업</span>
+        </label>
+        <label class="radio-item">
+          <input type="radio" name="education" value="석박사" />
+          <span class="radio-label">석사·박사</span>
+        </label>
+      </div>
+
       <button class="auth-btn" onclick="handleSignup()">회원가입</button>
 
       <div class="auth-footer">
@@ -95,6 +132,11 @@
     const errEl      = document.getElementById('error-msg');
     errEl.style.display = 'none';
 
+    const empEl  = document.querySelector('input[name="employment"]:checked');
+    const eduEl  = document.querySelector('input[name="education"]:checked');
+    const employment = empEl ? empEl.value : '';
+    const education  = eduEl ? eduEl.value : '';
+
     function showErr(msg) {
       errEl.textContent = msg;
       errEl.style.display = 'block';
@@ -106,12 +148,14 @@
     if (password !== password2)      { showErr('비밀번호가 일치하지 않습니다'); return; }
     if (!birth_date)                 { showErr('생년월일을 입력해주세요'); return; }
     if (!selectedGender)             { showErr('성별을 선택해주세요'); return; }
+    if (!employment)                 { showErr('취업상태를 선택해주세요'); return; }
+    if (!education)                  { showErr('최종 학력을 선택해주세요'); return; }
 
     try {
       const res  = await fetch('/auth/signup', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ nickname, email, password, birth_date, gender: selectedGender }),
+        body:    JSON.stringify({ nickname, email, password, birth_date, gender: selectedGender, employment, education }),
       });
       const data = await res.json();
       if (data.access_token) {

@@ -54,6 +54,8 @@ class SignupRequest(BaseModel):
     birth_date: str    # "YYYY-MM-DD"
     gender:     str    # "M" / "F"
     nickname:   str = ""
+    employment: str = ""  # "취업자" / "미취업자" / "자영업자"
+    education:  str = ""  # "고졸이하" / "대학재학" / "대졸" / "석박사"
 
 
 class LoginRequest(BaseModel):
@@ -89,13 +91,21 @@ def signup(req: SignupRequest):
     if req.gender not in ("M", "F"):
         raise HTTPException(status_code=400, detail="성별을 선택해주세요")
 
+    _VALID_EMPLOYMENT = {"취업자", "미취업자", "자영업자"}
+    _VALID_EDUCATION  = {"고졸이하", "대학재학", "대졸", "석박사"}
+    if req.employment and req.employment not in _VALID_EMPLOYMENT:
+        raise HTTPException(status_code=400, detail="올바른 취업상태 값이 아닙니다")
+    if req.education and req.education not in _VALID_EDUCATION:
+        raise HTTPException(status_code=400, detail="올바른 학력 값이 아닙니다")
+
     hashed_pw = _hash_password(req.password)
     conn = get_conn()
     try:
         cur = conn.cursor()
         cur.execute(
-            "INSERT INTO users (email, password, birth_date, gender, nickname) VALUES (?,?,?,?,?)",
-            (req.email, hashed_pw, req.birth_date, req.gender, req.nickname),
+            "INSERT INTO users (email, password, birth_date, gender, nickname, employment, education) VALUES (?,?,?,?,?,?,?)",
+            (req.email, hashed_pw, req.birth_date, req.gender, req.nickname,
+             req.employment or None, req.education or None),
         )
         conn.commit()
         user_id = cur.lastrowid
@@ -111,6 +121,8 @@ def signup(req: SignupRequest):
         "birth_date": req.birth_date,
         "gender":     req.gender,
         "age":        _calc_age(req.birth_date),
+        "employment": req.employment or "",
+        "education":  req.education  or "",
     })
     return {
         "message":      "회원가입 완료",
@@ -141,6 +153,8 @@ def login(req: LoginRequest):
         "birth_date": row["birth_date"] or "",
         "gender":     row["gender"] or "",
         "age":        _calc_age(row["birth_date"] or ""),
+        "employment": row["employment"] or "",
+        "education":  row["education"]  or "",
     })
     return {
         "message":      "로그인 성공",

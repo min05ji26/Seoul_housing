@@ -1,6 +1,6 @@
 # Claude Code 인수인계 메모
 
-작성일: 2026-05-04 (최종 갱신: 2026-05-06)
+작성일: 2026-05-04 (최종 갱신: 2026-05-06 5차)
 환경: Claude.ai → Claude Code (현재 작업 환경: 데스크탑 kj77k)
 
 ---
@@ -206,6 +206,32 @@
 - `get_v5_params()` 에서 하드코딩 제거, 실 데이터 연결 ✅
 
 **git 커밋**: `5c8b7d9` — feat: 청년정책 흐름 연결
+
+---
+
+### 청년정책 흐름 개편 1단계 — 회원가입 취업상태·학력 필드 추가 (2026-05-06 5차)
+
+배경: 청년정책 자격 조건 중 "자주 안 바뀌는" 취업상태·학력 2개를 회원가입 시 수집. 챗봇에서 매번 묻지 않도록 하는 개편의 1단계. 챗봇 흐름 변경은 2단계에서 진행.
+
+| 파일 | 변경 내용 |
+|------|-----------|
+| `webapp/static/signup.html` | 취업상태 라디오 3개(취업자/미취업자/자영업자) + 학력 라디오 4개(고졸이하/대학재학/대졸/석박사) 추가. 프론트 유효성 검사 + fetch body에 employment/education 포함 |
+| `webapp/static/auth.css` | `.radio-group`, `.radio-item`, `.radio-label`, `.radio-desc`, `.auth-required` 스타일 추가 |
+| `webapp/auth.py` | `SignupRequest`에 employment/education 필드 추가. 서버측 유효값 검증. INSERT SQL 확장. 회원가입/로그인 JWT 페이로드에 두 필드 포함 |
+| `webapp/database.py` | `init_db()` 자동 마이그레이션에 `employment`, `education` 컬럼 추가 (기존 DB도 무중단 마이그레이션) |
+| `webapp/main.py` | `bot.user_meta`에 `employment`, `education` 두 필드 추가 |
+
+**저장 값 규칙**
+- 취업상태: `"취업자"` / `"미취업자"` / `"자영업자"` (3개 고정)
+- 학력: `"고졸이하"` / `"대학재학"` / `"대졸"` / `"석박사"` (youth_policy_module.py `_EDU_ORDER` 키와 일치)
+- 카카오 로그인 사용자 / 기존 회원은 두 컬럼 NULL → 단계 2에서 챗봇이 청년정책 진입 시 물어볼 예정
+
+**다음 단계 (미착수)**
+- 단계 2: 챗봇 청년정책 흐름 개편 (공통 자격 1차 필터 → 정책 카드 표시 → 사용자 선택 → 추가 조건만 묻기)
+  - `nlp_input_module.py`의 `POLICY_DETAIL_ORDER`, `_ask_policy_xxx` 등 변경 예정
+  - user_meta.employment/education → policy 1차 필터에 활용 예정
+
+**git 커밋**: (이번 세션 커밋 예정)
 
 ---
 
@@ -478,6 +504,8 @@ Claude Code 새 세션에서:
 - 회원가입/로그인 (이메일+비번, JWT, bcrypt 직접 사용)
 - DB 통합 (sqlite3 + DBeaver)
 - **청년정책 흐름 연결**: JWT 나이/성별 + 챗봇 5개 슬롯(취업·소득·혼인·학력·무주택) → youth_policy_module 실 데이터 연결. 하드코딩 더미 완전 제거.
+- **소소한 대화(small talk) 지원**: 안녕·감사·도움·재시작·잡담 등 자연어 인사 처리. 슬롯 3개 이상 채워진 상태에서는 자동 비활성화.
+- **청년정책 흐름 개편 1단계**: 회원가입 폼에 취업상태(3종)·학력(4종) 라디오 버튼 추가. JWT에 employment/education 포함. bot.user_meta에 두 필드 주입.
 
 **🔄 권장 추가 작업 (시간 여유 시)**
 - **회원가입 설계 메모 권장사항 반영**:

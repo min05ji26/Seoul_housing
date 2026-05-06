@@ -246,6 +246,64 @@ body {
   font-weight: 600;
 }
 
+/* ── 라디오 그룹 (취업상태 / 학력) ───────────────── */
+.radio-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 6px;
+  margin-bottom: 4px;
+}
+
+.radio-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border: 2px solid #E5E7EB;
+  border-radius: 12px;
+  background: #FAFAFA;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.radio-item:hover {
+  border-color: #3ECF8E;
+  background: #E6FFF4;
+}
+
+.radio-item input[type="radio"] {
+  accent-color: #3ECF8E;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.radio-item:has(input:checked) {
+  border-color: #3ECF8E;
+  background: #E6FFF4;
+}
+
+.radio-label {
+  font-size: 14px;
+  font-weight: 500;
+  color: #374151;
+  line-height: 1.4;
+}
+
+.radio-desc {
+  font-size: 12px;
+  color: #9CA3AF;
+  font-weight: 400;
+}
+
+.auth-required {
+  color: #EF4444;
+  font-size: 13px;
+  margin-left: 2px;
+}
+
 /* ── 주 버튼 ──────────────────────────────────────── */
 .auth-btn {
   width: 100%;

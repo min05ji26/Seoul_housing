@@ -129,6 +129,8 @@ async def chat(req: ChatRequest, request: Request):
             "birth_date": user_info.get("birth_date", ""),
             "gender":     user_info.get("gender", ""),
             "nickname":   user_info.get("nickname", ""),
+            "employment": user_info.get("employment", ""),  # 회원가입 시 취업상태
+            "education":  user_info.get("education",  ""),  # 회원가입 시 학력
         }
 
     reply, is_done, v5_params = bot.process(req.user_message)
