@@ -184,7 +184,9 @@ class ChatBot:
         self._asked_vibe    = False
         self._asked_policy  = False
         self._done          = False
-        self._last_asked_slot: Optional[str] = None  # 직전에 물어본 슬롯
+        # 초기값 work_address — JS 초기 인사말이 직장 주소를 묻기 때문에
+        # 첫 사용자 입력도 컨텍스트 폴백이 작동하도록
+        self._last_asked_slot: Optional[str] = "work_address"
         self.user_meta: Dict[str, str] = {}  # 로그인 유저 정보 (birth_date, gender, age, nickname)
         # ── 청년정책 카드 플로우 상태 ──
         self._selection_error: Optional[str] = None   # 카드 선택 충돌 오류
@@ -368,6 +370,20 @@ class ChatBot:
         if re.search(r"알아서|위임|맡겨", text):
             return "위임"
         return None
+
+    @staticmethod
+    def _clean_work_address(text: str) -> str:
+        """직장 주소 정제 — 콤마 이후 부속 정보(층/호/방향 등) 제거."""
+        if not text:
+            return text
+        s = text.strip()
+        # 콤마 이후는 모두 제거 (", 1층", ", 지하1층", ", 옥상 등")
+        s = re.sub(r"\s*,.*$", "", s).strip()
+        # 공백 + 층/호/방향 (콤마 없이 띄어쓴 경우)
+        s = re.sub(r"\s+(지하\s*\d+층?|[Bb]\s*\d+층?|\d+층|\d+호)(\s.*)?$", "", s).strip()
+        s = re.sub(r"\s+(우측|좌측|앞|뒤|옆)$", "", s).strip()
+        s = re.sub(r"\s+", " ", s).strip()
+        return s
 
     @staticmethod
     def _validate_work_address(text: str):
@@ -604,8 +620,10 @@ class ChatBot:
 
         if not page:
             return (
-                "아쉽게도 현재 조건에 맞는 청년정책을 찾지 못했어요. "
-                "청년정책 없이 추천을 진행할게요."
+                "아쉽게도 현재 조건에 맞는 청년정책을 찾지 못했어요.\n"
+                "회원가입 시 입력한 취업상태·학력 정보가 맞지 않을 수 있어요.\n\n"
+                "👉 '조건 다시 입력'을 누르면 챗봇이 다시 물어볼게요.\n"
+                "👉 '정책 없이 진행'을 누르면 청년정책 없이 추천을 진행해요."
             )
 
         lines = ["📋 내 조건에 맞는 청년정책이에요!\n"]
@@ -666,9 +684,11 @@ class ChatBot:
             asked = self._last_asked_slot
             txt   = user_text.strip()
             if asked == "work_address" and txt:
-                valid, err = self._validate_work_address(txt)
+                # 콤마/층 등 부속 정보 정제 후 검증
+                cleaned = self._clean_work_address(txt) or txt
+                valid, err = self._validate_work_address(cleaned)
                 if valid:
-                    new_slots["work_address"] = txt
+                    new_slots["work_address"] = cleaned
                 else:
                     _addr_err = err
             elif asked == "weight_custom":
@@ -712,8 +732,18 @@ class ChatBot:
                     new_slots["policy_no_house"] = parsed
 
             elif asked == "policy_card_selection":
+                # "재입력"/"재설정" 처리 — employment/education 다시 묻기
+                if re.search(r"재입력|재설정|다시\s*입력|조건\s*다시", txt):
+                    self.slots.pop("policy_employment", None)
+                    self.slots.pop("policy_education",  None)
+                    self.slots.pop("candidate_policies", None)
+                    self.slots.pop("show_more_offset",   None)
+                    # user_meta 값도 비워서 챗봇이 다시 묻도록
+                    self.user_meta["employment"] = ""
+                    self.user_meta["education"]  = ""
+                    self._selection_error = None
                 # "더보기" 처리
-                if re.search(r"더\s*(보기|봐|줘|봐요)|다음|next", txt.lower()):
+                elif re.search(r"더\s*(보기|봐|줘|봐요)|다음|next", txt.lower()):
                     candidates = self.slots.get("candidate_policies", [])
                     curr_off   = self.slots.get("show_more_offset", 0)
                     next_start = (curr_off + 1) * 5
@@ -743,9 +773,11 @@ class ChatBot:
                             self.slots["required_conditions"] = self._compute_required_conditions(selected)
                             self._selection_error = None
 
-        # LLM이 추출한 work_address도 검증 (역명·건물명 거부)
+        # LLM이 추출한 work_address도 정제 후 검증
         if new_slots.get("work_address") and self.slots.get("work_address") is None:
-            valid, err = self._validate_work_address(new_slots["work_address"])
+            cleaned = self._clean_work_address(new_slots["work_address"]) or new_slots["work_address"]
+            new_slots["work_address"] = cleaned
+            valid, err = self._validate_work_address(cleaned)
             if not valid:
                 new_slots.pop("work_address")
                 if not _addr_err:
@@ -803,21 +835,6 @@ class ChatBot:
         if next_q == "__show_cards__":
             self.policy_cards = None  # 리셋 후 _build_card_message에서 세팅
             card_msg = self._build_card_message()
-            candidates = self.slots.get("candidate_policies", [])
-            # 후보가 없으면 즉시 selected_policies=[] 로 셋 후 진행
-            if not candidates:
-                self.slots["selected_policies"]  = []
-                self.slots["required_conditions"] = []
-                self.policy_cards = []
-                # 다음 질문 재결정 (조건 묻기 or 완료)
-                next_q2 = self._next_question()
-                if next_q2 is None:
-                    if not self._is_slots_complete():
-                        miss = self._missing_required()
-                        return card_msg + "\n\n" + SLOT_QUESTIONS[miss[0]], False, None
-                    self._done = True
-                    return card_msg + "\n\n" + self._build_summary(), True, self.get_v5_params()
-                return card_msg + "\n\n" + next_q2, False, None
             # 선택 오류가 있으면 메시지 앞에 붙이기
             if self._selection_error:
                 err = self._selection_error

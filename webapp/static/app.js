@@ -133,7 +133,17 @@ function enableRecNav() {
     navRec.classList.remove("disabled");
     navRec.href = "/recommendation";
   }
-  if (navBadge) navBadge.style.display = "";
+  // 매물 수 표시 (0건/미실행이면 숨김)
+  if (navBadge) {
+    const count = parseInt(localStorage.getItem("rec_result_count") || "0", 10);
+    if (count > 0) {
+      navBadge.textContent = count;
+      navBadge.style.display = "";
+    } else {
+      navBadge.textContent = "";
+      navBadge.style.display = "none";
+    }
+  }
 }
 
 // ── 말풍선 ───────────────────────────────────────────────

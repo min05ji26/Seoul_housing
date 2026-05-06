@@ -239,6 +239,21 @@ html, body { height: 100%; font-family: var(--font); background: var(--bg-card);
   flex-wrap: wrap;
   gap: 10px;
 }
+
+/* 버튼이 있을 때만 상단 구분선 + 레이블 표시 */
+#quick-options:not(:empty) {
+  border-top: 1.5px solid var(--border);
+  padding-top: 10px;
+}
+#quick-options:not(:empty)::before {
+  content: '💡 빠른 선택';
+  flex: 0 0 100%;
+  font-size: 12px;
+  color: var(--fg-secondary);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  margin-bottom: 2px;
+}
 .quick-btn {
   border: 2px solid var(--green);
   background: white;
@@ -554,137 +569,351 @@ html, body { height: 100%; font-family: var(--font); background: var(--bg-card);
 }
 .rec-rerun-btn:hover { color: var(--green); }
 
-/* ── 결과 카드 그리드 ──────────────────────────────── */
-#rec-cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-  gap: 16px;
-  margin-bottom: 24px;
+/* ── 추천 결과 페이지 — 레퍼런스 (min05ji26/Seoul_housing) UI 포팅 ── */
+
+/* 상단 컨트롤 바 */
+.rec-controls {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.rec-controls-left {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.rec-count-btn {
+  background: white;
+  border: 1.5px solid var(--green);
+  border-radius: 20px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--green);
+  cursor: pointer;
+  font-family: inherit;
+}
+.rec-sort-btn {
+  background: white;
+  border: 1.5px solid var(--border);
+  border-radius: 20px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg-secondary);
+  cursor: pointer;
+  font-family: inherit;
+}
+.rec-view-toggle {
+  display: flex;
+  gap: 8px;
+}
+.rec-view-btn {
+  background: white;
+  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #9CA3AF;
+  cursor: pointer;
+  font-family: inherit;
+}
+.rec-view-btn.active {
+  border-color: var(--green);
+  color: var(--green);
 }
 
-.rec-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  padding: 20px;
+/* 조건 칩 바 */
+.rec-condition-bar {
+  background: #E6FFF4;
+  border-radius: 10px;
+  padding: 10px 16px;
+  font-size: 13px;
+  color: var(--green);
+  font-weight: 600;
+  margin-bottom: 20px;
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.rec-cond-sep { color: #9CA3AF; }
+
+/* 1위 hero 카드 */
+.rec-top-card {
+  background: white;
+  border-radius: 16px;
+  display: flex;
+  gap: 0;
+  margin-bottom: 16px;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+}
+.rec-top-image {
+  width: 280px;
+  min-height: 200px;
+  background: linear-gradient(135deg, #3ECF8E, #2D6A4F);
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  transition: box-shadow 0.15s, transform 0.15s;
-}
-.rec-card:hover {
-  box-shadow: 0 4px 20px rgba(62, 207, 142, 0.12);
-  transform: translateY(-2px);
-}
-
-/* 카드 상단: 순위 + 위치 + 종합점수 */
-.rec-card-top {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  flex-shrink: 0;
 }
 .rec-rank-badge {
-  min-width: 36px;
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  background: rgba(255,255,255,0.2);
+  border-radius: 8px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  color: white;
+  z-index: 2;
+}
+.rec-score-badge {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  background: #1B1B1B;
+  border-radius: 8px;
+  padding: 4px 10px;
+  font-size: 13px;
+  font-weight: 700;
+  color: white;
+  z-index: 2;
+}
+.rec-heart-btn {
+  position: absolute;
+  bottom: 12px;
+  right: 12px;
+  width: 36px;
   height: 36px;
-  border-radius: 10px;
+  background: white;
+  border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: white;
-  font-size: 13px;
+  font-size: 18px;
+  cursor: pointer;
+  border: none;
+  z-index: 2;
+}
+.rec-top-content { flex: 1; padding: 24px; }
+.rec-address {
+  font-size: 16px;
   font-weight: 800;
-  flex-shrink: 0;
-}
-.rec-card-loc-wrap {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.rec-card-loc {
-  font-size: 17px;
-  font-weight: 800;
-  color: var(--fg);
-  line-height: 1.2;
-}
-.rec-type-tag {
-  display: inline-block;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--fg-secondary);
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 2px 7px;
-  align-self: flex-start;
-}
-.rec-total-score {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  flex-shrink: 0;
-}
-.rec-score-num  { font-size: 24px; font-weight: 900; color: var(--green); line-height: 1; }
-.rec-score-unit { font-size: 11px; color: var(--fg-secondary); }
-
-/* 통근·가격 통계 행 */
-.rec-card-stats {
-  display: flex;
-  align-items: center;
-  gap: 0;
-  background: var(--bg);
-  border-radius: 10px;
-  padding: 10px 14px;
-}
-.rec-stat {
-  flex: 1;
+  color: #111827;
+  margin-bottom: 4px;
   display: flex;
   align-items: center;
   gap: 6px;
 }
-.rec-stat-icon  { font-size: 16px; }
-.rec-stat-label { font-size: 12px; color: var(--fg-secondary); }
-.rec-stat-val   { font-size: 14px; font-weight: 700; color: var(--fg); margin-left: auto; }
-.rec-stat-divider {
-  width: 1px;
-  height: 24px;
-  background: var(--border);
-  margin: 0 14px;
-  flex-shrink: 0;
+.rec-detail {
+  font-size: 12px;
+  color: #9CA3AF;
+  margin-bottom: 12px;
 }
-
-/* 점수 바 */
-.rec-score-bars { display: flex; flex-direction: column; gap: 7px; }
-.rec-score-row  {
+.rec-price {
+  font-size: 22px;
+  font-weight: 900;
+  color: var(--green);
+  margin-bottom: 4px;
+}
+.rec-mgmt {
+  font-size: 11px;
+  color: #9CA3AF;
+  margin-bottom: 16px;
+  font-style: italic;
+}
+.rec-scores {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.rec-score-row {
   display: flex;
   align-items: center;
   gap: 8px;
+  font-size: 13px;
+  color: #4B5563;
 }
-.rec-score-label {
-  font-size: 11px;
-  color: var(--fg-secondary);
-  width: 46px;
+.rec-score-row > span:first-child {
+  width: 38px;
   flex-shrink: 0;
+  font-weight: 600;
 }
-.rec-bar-track {
+.rec-score-bar {
   flex: 1;
   height: 6px;
-  background: var(--bg);
-  border-radius: 4px;
+  background: #E5E7EB;
+  border-radius: 3px;
   overflow: hidden;
 }
-.rec-bar-fill {
+.rec-score-fill {
   height: 100%;
-  border-radius: 4px;
-  transition: width 0.6s ease;
+  background: var(--green);
+  border-radius: 3px;
+  transition: width 0.5s ease;
 }
-.rec-score-pct {
-  font-size: 11px;
+.rec-score-num {
+  font-size: 12px;
   font-weight: 700;
-  color: var(--fg-secondary);
-  width: 24px;
+  color: var(--green);
+  min-width: 36px;
   text-align: right;
   flex-shrink: 0;
+}
+.rec-policy {
+  background: #E6FFF4;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: #2D6A4F;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+.rec-tags {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.rec-tag {
+  background: #F3F4F6;
+  border-radius: 20px;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: #4B5563;
+  font-weight: 600;
+}
+
+/* 2~N위 그리드 카드 */
+.rec-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin-bottom: 24px;
+}
+.rec-card {
+  background: white;
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  transition: box-shadow 0.15s, transform 0.15s;
+}
+.rec-card:hover {
+  box-shadow: 0 4px 16px rgba(0,0,0,0.1);
+  transform: translateY(-2px);
+}
+.rec-card-image {
+  height: 140px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 48px;
+  position: relative;
+}
+.rec-card-image.blue  { background: linear-gradient(135deg, #93C5FD, #3B82F6); }
+.rec-card-image.green { background: linear-gradient(135deg, #6EE7B7, #059669); }
+.rec-card-image.gray  { background: #E5E7EB; }
+.rec-card-body { padding: 14px; }
+.rec-card-rank {
+  font-size: 11px;
+  color: #9CA3AF;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.rec-card-addr {
+  font-size: 14px;
+  font-weight: 700;
+  color: #111827;
+  margin-bottom: 6px;
+}
+.rec-card-price {
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--green);
+  margin-bottom: 8px;
+}
+.rec-card-info {
+  font-size: 12px;
+  color: #9CA3AF;
+  margin-bottom: 4px;
+}
+.rec-card-policy {
+  font-size: 11px;
+  color: var(--green);
+  font-weight: 600;
+}
+
+/* 더보기 카드 */
+.rec-more-card {
+  background: #F3F4F6;
+  border-radius: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  cursor: pointer;
+  min-height: 200px;
+  text-align: center;
+  padding: 16px;
+}
+.rec-more-card:hover { background: #E5E7EB; }
+.rec-more-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #4B5563;
+}
+.rec-more-sub {
+  font-size: 12px;
+  color: #9CA3AF;
+}
+.rec-more-btn {
+  background: var(--green);
+  border: none;
+  border-radius: 20px;
+  padding: 8px 16px;
+  font-size: 12px;
+  font-weight: 700;
+  color: white;
+  cursor: pointer;
+  font-family: inherit;
+  margin-top: 4px;
+}
+
+/* 지도뷰 placeholder */
+#rec-map-view {
+  background: white;
+  border-radius: 16px;
+  padding: 60px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  font-size: 18px;
+  font-weight: 700;
+  color: #4B5563;
+  min-height: 400px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+}
+.rec-map-sub {
+  display: block;
+  margin-top: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #9CA3AF;
 }
 
 /* ── 청년정책 매칭 섹션 (카드 내부) ────────────────── */
@@ -778,10 +1007,18 @@ a.rec-policy-name:hover { color: #f59e0b; text-decoration: underline; }
 .rec-avg-bad    { color: #ef4444;      font-weight: 700; }
 
 /* ── 추천 페이지 반응형 ─────────────────────────────── */
+@media (max-width: 1024px) {
+  .rec-grid { grid-template-columns: repeat(2, 1fr); }
+  .rec-top-image { width: 200px; }
+  .rec-scores { grid-template-columns: 1fr; }
+}
 @media (max-width: 768px) {
   #app-rec { grid-template-columns: 1fr; }
   #app-rec #sidebar { display: none; }
   #rec-results { padding: 16px; }
   #rec-page-header { padding: 0 16px; }
-  #rec-cards { grid-template-columns: 1fr; }
+  .rec-top-card { flex-direction: column; }
+  .rec-top-image { width: 100%; height: 160px; }
+  .rec-grid { grid-template-columns: 1fr; }
+  .rec-controls { flex-direction: column; align-items: stretch; }
 }

@@ -51,6 +51,8 @@ if _missing_keys:
 # 3. 공통 설정
 # =========================================================
 REQUEST_TIMEOUT       = 20
+KAKAO_TIMEOUT_SEC     = 10   # 카카오 API 단일 호출 타임아웃 (초)
+KAKAO_RETRY_ATTEMPTS  = 3    # 최대 시도 횟수 (첫 시도 + 재시도 2회)
 SLEEP_BETWEEN_CALLS   = 0.5
 ODSAY_RETRY_COUNT     = 2
 ODSAY_RETRY_SLEEP_SEC = 0.7
@@ -189,6 +191,36 @@ def truncate_text(text, max_len=300):
     text = str(text).replace("\n"," ").replace("\r"," ").strip()
     return text if len(text)<=max_len else text[:max_len]+"..."
 
+
+def _kakao_request(tag: str, url: str, headers: dict, params: dict) -> requests.Response:
+    """카카오 API GET 요청 공통 헬퍼 (재시도 + 타임아웃 보강).
+
+    재시도 대상: DNS 실패(ConnectionError), 타임아웃(Timeout), 서버 오류(5xx)
+    재시도 안함: 4xx 응답 (인증 실패·잘못된 요청 — 재시도해도 결과 동일)
+    최대 시도: KAKAO_RETRY_ATTEMPTS회, 지수 백오프 (1초 → 2초)
+    최종 실패 시 APIError를 raise해 상위 fallback 로직이 캐치할 수 있도록 함.
+    """
+    last_exc: Exception = RuntimeError("알 수 없는 오류")
+    for attempt in range(1, KAKAO_RETRY_ATTEMPTS + 1):
+        try:
+            resp = requests.get(url, headers=headers, params=params, timeout=KAKAO_TIMEOUT_SEC)
+            if resp.status_code >= 500:
+                raise APIError(f"[{tag}] 서버 오류 HTTP {resp.status_code}: {truncate_text(resp.text)}")
+            return resp  # 2xx or 4xx → 즉시 반환 (재시도 불필요)
+        except (requests.exceptions.ConnectionError,
+                requests.exceptions.Timeout,
+                APIError) as exc:
+            last_exc = exc
+            if attempt < KAKAO_RETRY_ATTEMPTS:
+                wait = 2 ** (attempt - 1)  # 1초 → 2초
+                print(f"[{tag}] 시도 {attempt}/{KAKAO_RETRY_ATTEMPTS} 실패: "
+                      f"{type(exc).__name__}. {wait}초 후 재시도...")
+                time.sleep(wait)
+            else:
+                print(f"[{tag}] 시도 {attempt}/{KAKAO_RETRY_ATTEMPTS} 실패: "
+                      f"{type(exc).__name__}. 최종 실패.")
+    raise APIError(f"[{tag}] 최종 실패: {last_exc}") from last_exc
+
 def haversine_km(lat1, lon1, lat2, lon2):
     R = 6371.0
     p1, p2 = math.radians(lat1), math.radians(lat2)
@@ -254,11 +286,11 @@ def clean_work_address(addr: str) -> str:
 
 def geocode_address_kakao(address, kakao_local_key):
     require_key("KAKAO_LOCAL_REST_API_KEY", kakao_local_key)
-    resp = requests.get(
+    resp = _kakao_request(
+        "Kakao Local",
         "https://dapi.kakao.com/v2/local/search/address.json",
         headers={"Authorization": f"KakaoAK {kakao_local_key}"},
         params={"query": address, "analyze_type": "similar", "size": 1},
-        timeout=REQUEST_TIMEOUT,
     )
     if resp.status_code != 200:
         raise APIError(f"[Kakao Local] HTTP {resp.status_code}: {truncate_text(resp.text)}")
@@ -328,11 +360,11 @@ def get_drive_route_kakaomobility(ox, oy, dx, dy, key, departure_time: str = Non
         params = {"origin": f"{ox},{oy}", "destination": f"{dx},{dy}",
                   "priority": "TIME", "summary": "true",
                   "alternatives": "false", "road_details": "false"}
-    resp = requests.get(
+    resp = _kakao_request(
+        "Kakao Mobility",
         endpoint,
         headers={"Authorization": f"KakaoAK {key}", "Content-Type": "application/json"},
         params=params,
-        timeout=REQUEST_TIMEOUT,
     )
     if resp.status_code != 200:
         raise APIError(f"[Kakao Mobility] HTTP {resp.status_code}: {truncate_text(resp.text)}")
@@ -973,7 +1005,8 @@ def _get_nearest_infra_distance(x, y, category_code, kakao_key, radius=1000):
     없으면 None 반환.
     """
     try:
-        resp = requests.get(
+        resp = _kakao_request(
+            "Kakao Infra",
             "https://dapi.kakao.com/v2/local/search/category.json",
             headers={"Authorization": f"KakaoAK {kakao_key}"},
             params={
@@ -983,7 +1016,6 @@ def _get_nearest_infra_distance(x, y, category_code, kakao_key, radius=1000):
                 "sort": "distance",
                 "size": 1,
             },
-            timeout=REQUEST_TIMEOUT,
         )
         if resp.status_code != 200:
             return None
@@ -1422,7 +1454,8 @@ def run_recommendation(housing_csv_path, work_address, transport_mode,
                         max_policy_display=3,
                         monthly_rent_manwon=50.0,
                         chatbot_mode=False,
-                        vibe_list=None):
+                        vibe_list=None,
+                        selected_policies=None):
 
     if transport_mode not in ("car","transit"):
         raise ValueError("이동수단은 'car' 또는 'transit'")
@@ -1604,7 +1637,16 @@ def run_recommendation(housing_csv_path, work_address, transport_mode,
         )
 
         # ── 청년정책 점수 조회 (TOPSIS 이전에 실행) ──────
-        if user_info and is_youth_api_configured():
+        if selected_policies:
+            # 챗봇 카드 플로우: 사용자가 선택한 정책 그대로 사용 (자격 재확인 X)
+            print(f"\n[청년정책] 사용자 선택 정책 {len(selected_policies)}건 적용")
+            total_saving = sum(p.get("_monthly_saving", 0) for p in selected_policies[:max_policy_display])
+            ref_budget   = max(monthly_rent_manwon, 1.0)
+            uniform_score = min(100.0, round(total_saving / ref_budget * 100, 2))
+            s3_ok["policy_score"]   = uniform_score
+            s3_ok["policy_matched"] = [list(selected_policies) for _ in range(len(s3_ok))]
+            print(f"  → 정책 점수: {uniform_score:.0f}점 (월 절감 추정 {total_saving:.0f}만원)")
+        elif user_info and is_youth_api_configured():
             print(f"\n[청년정책] 매물 지역별 청년정책 조회 중...")
             policy_cache = {}
             policy_scores = []

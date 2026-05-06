@@ -199,19 +199,46 @@ async def recommend(req: RecommendRequest):
 # ──────────────────────────────────────────────────────────
 
 def _df_to_list(df) -> list:
+    """final_df → 프론트 JSON 직렬화 (recommendation.js renderCard에서 사용).
+
+    레퍼런스 레포(min05ji26/Seoul_housing) 카드 UI에 맞춰 필드 확장:
+      - commute_score / cost_score / infra_score / safety_score / green_score (4축 점수)
+      - area_m2 / monthly_rent_manwon / rent_type (상세 정보)
+      - address (display_address) — 매물 도로명/동 표시용
+    """
+    import math
+
+    def _safe_float(v, default=0.0):
+        try:
+            f = float(v)
+            return default if math.isnan(f) else f
+        except (TypeError, ValueError):
+            return default
+
+    def _to_pct(v, default=0):
+        """0~1 점수 → 0~100 정수. 이미 0~100이면 그대로."""
+        f = _safe_float(v, 0)
+        if f <= 1.0:
+            f *= 100
+        return int(round(min(100, max(0, f))))
+
     rows = []
     for _, row in df.iterrows():
         # stage3(MOLIT) 컬럼과 stage2 fallback(CSV) 컬럼 모두 대응
-        price = (row.get("conv_deposit_manwon")
-                 or row.get("median_deposit")
-                 or row.get("환산보증금(만원)")
-                 or 0)
+        deposit = (row.get("deposit_manwon")
+                   or row.get("conv_deposit_manwon")
+                   or row.get("median_deposit")
+                   or row.get("환산보증금(만원)")
+                   or 0)
+        monthly = (row.get("monthly_rent_manwon")
+                   or row.get("월세")
+                   or 0)
         commute = (row.get("commute_time_min")
                    or row.get("예상_통근시간(분)")
                    or 0)
-        score = (row.get("final_score")
-                 or row.get("topsis_score")
-                 or 0)
+        score   = (row.get("final_score")
+                   or row.get("topsis_score")
+                   or 0)
         # policy_matched: 매칭된 청년정책 목록 → 프론트 카드에 표시
         raw_pm = row.get("policy_matched")
         policy_matched = []
@@ -224,27 +251,51 @@ def _df_to_list(df) -> list:
                     continue
                 policy_matched.append({
                     "name":    name,
-                    "saving":  round(float(p.get("_monthly_saving", 0))),
+                    "saving":  round(_safe_float(p.get("_monthly_saving", 0))),
                     "benefit": p.get("_benefit_desc", ""),
                     "url":     p.get("plcyUrlAddr", "") or p.get("polyBizSjnm", ""),
                     "dup":     bool(p.get("_dup_limit", False)),
                 })
 
+        gu     = str(row.get("시군구_2") or row.get("gu") or "")
+        dong   = str(row.get("읍면동")   or row.get("dong") or "")
+        addr   = str(row.get("display_address") or row.get("candidate_address") or "")
+        # 도로명 주소가 없으면 "구 동" 폴백
+        if not addr:
+            addr = (gu + " " + dong).strip()
+
         rows.append({
-            "gu":            str(row.get("시군구_2") or row.get("gu") or ""),
-            "dong":          str(row.get("읍면동")   or row.get("dong") or ""),
+            "gu":            gu,
+            "dong":          dong,
+            "address":       addr,
             "house_type":    str(row.get("housing_type") or row.get("주택유형") or ""),
-            "score":         round(float(score), 4),
-            "price_manwon":  int(float(price)),
-            "commute_min":   int(round(float(commute))),
-            "infra_score":   row.get("infra_score"),
-            "policy_score":  row.get("policy_score"),
+            "rent_type":     str(row.get("rent_type") or ""),
+            "area_m2":       round(_safe_float(row.get("area_m2"), 0), 1),
+            # 가격
+            "deposit_manwon":     int(_safe_float(deposit)),
+            "monthly_rent_manwon": int(_safe_float(monthly)),
+            "price_manwon":  int(_safe_float(deposit)),  # 호환용 (구 키)
+            # 통근
+            "commute_min":   int(round(_safe_float(commute))),
+            # 점수 (0~100 정수)
+            "score":         _to_pct(score),               # 종합 (final_score)
+            "commute_score": _to_pct(row.get("commute_score")),
+            "cost_score":    _to_pct(row.get("housing_score")),
+            "infra_score":   _to_pct(row.get("infra_score")),
+            "safety_score":  None,  # 데이터 없음
+            "green_score":   None,  # 데이터 없음
+            "policy_score":  _to_pct(row.get("policy_score")),
+            # 청년정책
             "policy_matched": policy_matched,
+            "policy_count":   len(policy_matched),
         })
     return rows
 
 
 def _quick_options_for(slot: Optional[str], bot: ChatBot) -> list:
+    # 추천 완료 후에는 빠른 옵션 미표시
+    if bot._done:
+        return []
     if slot == "transport_mode":
         return [{"label": "자가용", "value": "자가용"}, {"label": "대중교통", "value": "대중교통"}]
     if slot == "rent_type":
@@ -289,7 +340,14 @@ def _quick_options_for(slot: Optional[str], bot: ChatBot) -> list:
                 {"label": "자영업자",  "value": "자영업자"},
             ]
         if asked == "policy_card_selection":
-            # 카드 선택 단계 — "없음" 버튼만 제공 (번호는 직접 입력)
+            # 1차 필터 0건이면 "재입력" + "정책 없이 진행" 두 버튼
+            cands = bot.slots.get("candidate_policies")
+            if cands is not None and len(cands) == 0 and bot.slots.get("selected_policies") is None:
+                return [
+                    {"label": "조건 다시 입력", "value": "재입력"},
+                    {"label": "정책 없이 진행", "value": "없음"},
+                ]
+            # 카드 표시 중 — "없음" 버튼만 제공 (번호는 직접 입력)
             return [{"label": "정책 없이 진행", "value": "없음"}]
         if asked == "policy_marriage" and bot.slots.get("policy_marriage") is None:
             return [{"label": "미혼", "value": "① 미혼"}, {"label": "기혼", "value": "② 기혼"}]

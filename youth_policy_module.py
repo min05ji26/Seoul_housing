@@ -278,19 +278,18 @@ def _check_age(p: dict, user_age: str) -> bool:
 
 def _syn_match(syn: str, text: str) -> bool:
     """한국어 텍스트에서 시노님을 음절 경계로 매칭.
-    앞뒤가 한글 음절([가-힣])이면 부분 단어이므로 불매칭.
+    앞이 한글 음절([가-힣])이면 부분 단어로 간주하여 불매칭.
+    뒤는 한국어 조사(이/가/을/를/은/는/도/만/등 등) 허용을 위해 검사하지 않음.
     예) '취업자' in '미취업자' → False  (앞이 '미'로 한글 음절)
-        '취업자' in '취업자 대상' → True  (앞이 문자열 시작)
+        '재직자' in '재직자만'  → True   (뒤 '만'은 조사)
+        '취업자' in '취업자 대상' → True
     """
-    pattern = f"(?<![가-힣]){re.escape(syn)}(?![가-힣])"
+    pattern = f"(?<![가-힣]){re.escape(syn)}"
     return bool(re.search(pattern, text))
 
 
 def _check_employment(p: dict, user_emp: str) -> bool:
     if not user_emp:
-        return True
-    job_cd = str(p.get("jobCd", "")).strip()
-    if not job_cd:
         return True
     text = _extract_policy_text(p)
 
@@ -298,13 +297,25 @@ def _check_employment(p: dict, user_emp: str) -> bool:
     if "전체" in text or "제한없음" in text:
         return True
 
-    # 시노님 매핑으로 확장 매칭 (음절 경계 기반)
+    # jobCd 자체가 비어있으면 통과 (취업상태 무관 정책으로 간주)
+    job_cd = str(p.get("jobCd", "")).strip()
+    if not job_cd:
+        return True
+
+    # 사용자 그룹 시노님이 텍스트에 있으면 통과
     synonyms = EMPLOYMENT_SYNONYMS.get(user_emp, [user_emp])
     for syn in synonyms:
         if _syn_match(syn, text):
             return True
 
-    return False
+    # 폴백: 다른 취업상태 그룹의 명시 표현이 텍스트에 있으면 거부 (배타적 자격)
+    # 없으면 일반 청년정책으로 간주하고 통과 (false negative 방지)
+    other_groups = [k for k in EMPLOYMENT_SYNONYMS if k != user_emp]
+    for other in other_groups:
+        for syn in EMPLOYMENT_SYNONYMS[other]:
+            if _syn_match(syn, text):
+                return False
+    return True
 
 
 def _check_income(p: dict, user_income_manwon: str) -> bool:
@@ -491,25 +502,35 @@ def fetch_candidates_basic(
     source = MOCK_POLICIES if _TEST_MODE else None
     if source is None:
         if not _POLICY_CACHE:
-            _POLICY_CACHE = _fetch_all_policies(max_pages=5, page_size=50)
+            _POLICY_CACHE = _fetch_all_policies(max_pages=10, page_size=100)
         source = _POLICY_CACHE
+
+    # 단계별 카운터 (디버그용)
+    counts = {"total": len(source), "seoul": 0, "age": 0, "emp": 0,
+              "edu": 0, "housing": 0, "saving": 0}
 
     candidates = []
     for p in source:
         if not _is_seoul_policy(p, gu_name):
             continue
+        counts["seoul"] += 1
         if not _check_age(p, user_info.get("age", "")):
             continue
+        counts["age"] += 1
         if not _check_employment(p, user_info.get("employment", "")):
             continue
+        counts["emp"] += 1
         if not _check_education(p, user_info.get("education", "")):
             continue
+        counts["edu"] += 1
         if not _is_housing_related(p):
             continue
+        counts["housing"] += 1
 
         benefit = analyze_benefit(p, gu_name)
         if benefit["monthly_saving"] <= 0:
             continue
+        counts["saving"] += 1
 
         # 메타데이터 부착 (dict 원본 복사 후 수정)
         p = dict(p)
@@ -520,6 +541,13 @@ def fetch_candidates_basic(
         p["_conflict_label"]  = _classify_conflict(p, benefit["benefit_type"])
         p["_auto_match"]      = _auto_match_labels(p, user_info)
         candidates.append(p)
+
+    print(f"[정책 1차 필터링 funnel] gu={gu_name}, "
+          f"emp={user_info.get('employment','')}, edu={user_info.get('education','')}, "
+          f"age={user_info.get('age','')}")
+    print(f"  total={counts['total']} → 서울={counts['seoul']} → 나이={counts['age']} → "
+          f"취업={counts['emp']} → 학력={counts['edu']} → 주거={counts['housing']} → "
+          f"절감>0={counts['saving']}")
 
     # 절감액 순 정렬 + 정책명 중복 제거
     candidates.sort(key=lambda x: x["_monthly_saving"], reverse=True)

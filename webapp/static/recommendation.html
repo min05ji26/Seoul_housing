@@ -97,16 +97,39 @@
     <!-- 결과 -->
     <div id="rec-results" style="display:none">
 
-      <!-- 검색 조건 요약 바 -->
-      <div id="rec-summary-bar"></div>
+      <!-- 상단 컨트롤 (추천 개수 / 정렬 / 카드뷰·지도뷰) -->
+      <div class="rec-controls">
+        <div class="rec-controls-left">
+          <button class="rec-count-btn" id="rec-count-btn">추천 개수: 5개 ▼</button>
+          <button class="rec-sort-btn" id="rec-sort-btn">정렬: 종합 ▼</button>
+        </div>
+        <div class="rec-view-toggle">
+          <button class="rec-view-btn active" data-view="card">카드뷰</button>
+          <button class="rec-view-btn" data-view="map">지도뷰</button>
+        </div>
+      </div>
 
-      <!-- 결과 카드 그리드 -->
-      <div id="rec-cards"></div>
+      <!-- 조건 바 (chips) -->
+      <div class="rec-condition-bar" id="rec-condition-bar"></div>
 
-      <!-- 서울 평균 비교 -->
+      <!-- 1위 hero 카드 -->
+      <div id="rec-top-card-wrap"></div>
+
+      <!-- 2~N위 그리드 -->
+      <div class="rec-grid" id="rec-grid"></div>
+
+      <!-- 서울 평균 비교 (우리만 있는 강점) -->
       <div id="rec-avg-section" style="display:none">
         <div class="rec-avg-chip">📊 서울 평균 대비 비교</div>
         <div id="rec-avg-content"></div>
+      </div>
+
+      <!-- 지도뷰 (placeholder) -->
+      <div id="rec-map-view" style="display:none">
+        <div class="rec-map-placeholder">
+          🗺️ 지도뷰는 준비 중이에요.<br>
+          <span class="rec-map-sub">곧 매물 위치를 지도에서 한눈에 볼 수 있어요.</span>
+        </div>
       </div>
 
     </div>

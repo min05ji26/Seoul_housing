@@ -1,6 +1,6 @@
 # Claude Code 인수인계 메모
 
-작성일: 2026-05-04 (최종 갱신: 2026-05-06 5차)
+작성일: 2026-05-04 (최종 갱신: 2026-05-07 8차)
 환경: Claude.ai → Claude Code (현재 작업 환경: 데스크탑 kj77k)
 
 ---
@@ -14,7 +14,7 @@
 3. `vibe_매핑_설계.md` — vibe 모듈 설계 + 학술 근거
 4. `phase7_챗봇_웹앱_설계.md` — 챗봇 + 웹앱 작업 지시서
 
-**현재 상태: 챗봇 웹앱 로직 버그 수정 완료, 추천 엔진 정상 동작 확인 중**
+**현재 상태: 챗봇 버그 수정 완료, 추천 페이지 UI 포팅 완료, 카카오 API 재시도 안전장치 추가 완료**
 
 ---
 
@@ -267,8 +267,53 @@
 
 **git 커밋**: `a909735`
 
-**다음 단계 (미착수)**
-- 단계 3: 프론트엔드 카드 UI (app.js에서 policy_cards를 챗봇 버블 안에 카드 형태로 렌더링)
+---
+
+### 웹앱 버그 수정 5종 + 추천 페이지 UI 포팅 (2026-05-07 7차)
+
+#### 기능 추가: 소소한 대화(small talk) 지원
+- `nlp_input_module.py`: 인사/감사/잡담 등 정규식 패턴 감지 → 슬롯 수집 흐름 방해 없이 짧은 응답. 슬롯 3개 이상 채워지면 자동 비활성화.
+
+#### 버그 수정 5종
+
+| 수정 | 파일 | 내용 |
+|------|------|------|
+| Bug 1: 추천 배지 `✓` 노출 | `webapp/static/index.html`, `webapp/static/app.js` | 추천 카운트 배지 빈 span 처리. `enableRecNav()` → localStorage `rec_result_count` 읽어 숫자로 표시 |
+| Bug 2: 청년정책 취업상태 매칭 | `youth_policy_module.py`, `nlp_input_module.py` | `EMPLOYMENT_SYNONYMS` + `_check_employment()` 음절 경계 regex(`(?<![가-힣])`) 보강. 후보 0건 시 자동 진행 대신 사용자 버튼("조건 다시 입력" / "정책 없이 진행") 대기 |
+| Bug 3: 직장 주소 ", 1층" 거부 | `nlp_input_module.py` | `_clean_work_address()` 헬퍼 추가 + `_last_asked_slot="work_address"` 초기값 설정 |
+| Bug 4: 완료 후 빠른 옵션 잔류 | `webapp/main.py` | `_quick_options_for()` 상단 `if bot._done: return []` 추가 |
+| Bug 5: selected_policies 파라미터 오류 | `housing_recommendation_v5.py` | `run_recommendation()` 시그니처에 `selected_policies=None` 추가 |
+
+#### 추천 페이지 UI 전면 개편 (min05ji26/Seoul_housing 레포 참조 Vanilla JS 포팅)
+- `webapp/static/recommendation.html`: 추천 개수/정렬/카드뷰·지도뷰 컨트롤 + 조건 칩 바 + 1위 hero 카드 + 2~N위 그리드 구조로 개편
+- `webapp/static/recommendation.js`: `renderTopCard()` (1위 hero + 4축 점수 바 + 청년정책 배너), `renderRestCard()` (색상코드 카드), sort/view toggle, 즐겨찾기(localStorage) 전면 재작성
+- `webapp/static/style.css`: `.rec-controls`, `.rec-top-card`, `.rec-card`, `.rec-grid`, `.rec-score-bar` 등 추천 카드 UI CSS 전면 교체. 반응형 3→2→1 컬럼(1024px/768px)
+
+#### `_df_to_list()` 필드 확장
+- `webapp/main.py`: `commute_score`, `cost_score`, `area_m2`, `monthly_rent_manwon`, `rent_type`, `address`, `policy_count`, `deposit_manwon` 추가. 점수 0~100 정수 정규화(`_to_pct()`)
+
+결과: 5개 버그 수정 완료, 추천 페이지 UI 정상 렌더링 확인.
+
+---
+
+### 추가 버그 수정 + 카카오 API 안전장치 (2026-05-07 8차)
+
+#### 빠른 옵션 UI 개선 (Design A)
+- `webapp/static/style.css`: `#quick-options:not(:empty)` → 상단 구분선(`border-top: 1.5px solid var(--border)`) + `::before` "💡 빠른 선택" 레이블 자동 표시. 버튼 없으면 자동 숨김.
+
+#### 청년정책 0건 버그 수정 — API 페이지 범위
+- `youth_policy_module.py` `fetch_candidates_basic()`: `_fetch_all_policies(max_pages=5, page_size=50)` → `(max_pages=10, page_size=100)`. 250건 제한으로 251번째 이후 정책 누락되던 문제 해결. `_POLICY_CACHE`는 서버 전역 공유 — 첫 사용자 시 1회 10회 API 호출, 이후 0회.
+
+#### 추천 에러 메시지 UX 개선
+- `webapp/static/recommendation.js`: 카카오 API 관련 오류(ConnectionPool/kakao/getaddrinfo) → 사용자 친화적 메시지로 변환. raw exception 노출 방지.
+
+#### 카카오 API 호출 재시도 + 타임아웃 보강
+- `housing_recommendation_v5.py`:
+  - `KAKAO_TIMEOUT_SEC = 10`, `KAKAO_RETRY_ATTEMPTS = 3` 상수 추가 (line 54-55)
+  - `_kakao_request()` 공통 헬퍼 추가 (line 195): 재시도 대상(ConnectionError/Timeout/5xx) 지수 백오프(1초→2초), 4xx 즉시 실패, 최종 실패 시 APIError raise
+  - `geocode_address_kakao()`, `get_drive_route_kakaomobility()`, `_get_nearest_infra_distance()` 내 `requests.get()` → `_kakao_request()` 교체
+
+결과: 정상 주소 좌표 변환 성공, 재시도 로그 미출력 확인. 서버 재시작 완료.
 
 ---
 
@@ -534,7 +579,7 @@ Claude Code 새 세션에서:
 2. 사용자가 새 오류 리포트를 가져오면 해당 오류부터 처리
 3. 오류 없으면 경진대회 마감(5/13) 전 남은 항목 확인:
 
-**✅ 완료된 항목 (2026-05-06 기준)**
+**✅ 완료된 항목 (2026-05-07 기준)**
 - 챗봇 슬롯 수집 / 추천 엔진 / 청년정책 매칭
 - vibe 8개 카테고리 통합
 - UI git 매칭 (집찾봇 브랜드, 카카오 버튼, 비밀번호찾기)
@@ -544,6 +589,11 @@ Claude Code 새 세션에서:
 - **소소한 대화(small talk) 지원**: 안녕·감사·도움·재시작·잡담 등 자연어 인사 처리. 슬롯 3개 이상 채워진 상태에서는 자동 비활성화.
 - **청년정책 흐름 개편 1단계**: 회원가입 폼에 취업상태(3종)·학력(4종) 라디오 버튼 추가. JWT에 employment/education 포함. bot.user_meta에 두 필드 주입.
 - **청년정책 흐름 개편 2단계**: 시노님 매핑(음절 경계 regex) + 카드 선택 플로우. user_meta 자동 채우기. policy_cards API 필드 추가.
+- **챗봇 버그 수정 5종** (2026-05-07): 추천 배지·청년정책 취업 매칭·직장주소 파싱·완료 후 옵션 잔류·selected_policies 파라미터 오류.
+- **추천 페이지 UI 전면 개편** (2026-05-07): min05ji26/Seoul_housing 레포 Vanilla JS 포팅. hero 카드 + 그리드 + 정렬/카드뷰·지도뷰 토글.
+- **빠른 옵션 UI 개선** (2026-05-07): 구분선 + "💡 빠른 선택" 레이블 자동 표시.
+- **청년정책 API 페이지 범위 수정** (2026-05-07): max_pages 5→10, page_size 50→100. 250건 제한으로 누락되던 정책 해결.
+- **카카오 API 재시도 안전장치** (2026-05-07): `_kakao_request()` 헬퍼 — 3회 재시도, 지수 백오프(1s→2s), 4xx 즉시 실패. 3개 함수 적용.
 
 **🔄 권장 추가 작업 (시간 여유 시)**
 - **회원가입 설계 메모 권장사항 반영**:
