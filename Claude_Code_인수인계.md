@@ -1,6 +1,6 @@
 # Claude Code 인수인계 메모
 
-작성일: 2026-05-04 (최종 갱신: 2026-05-05)
+작성일: 2026-05-04 (최종 갱신: 2026-05-06)
 환경: Claude.ai → Claude Code (현재 작업 환경: 데스크탑 kj77k)
 
 ---
@@ -175,6 +175,40 @@
 | 역명 입력 시 재질문 안 됨 | `nlp_input_module.py` `process()` | LLM 추출 `work_address`도 머지 전 `_validate_work_address()` 검증. 무효 시 `new_slots`에서 제거 + `_last_asked_slot="work_address"` 유지 → 재질문 정상 동작 |
 | 통근시간 숫자만 입력 | `nlp_input_module.py` `_parse_commute_minutes()` | 순수 숫자 입력(`^\s*(\d+)\s*$`) → 분으로 처리하는 폴백 추가. "80" → 80분 인식. 5~300분 필터 동일 적용 |
 
+### 청년정책 흐름 연결 — JWT + 챗봇 슬롯 실 데이터 연결 (2026-05-06 4차)
+
+**배경**: 로그인 JWT의 나이/성별이 `bot.user_meta`에 이미 저장되어 있었으나, `get_v5_params()`는 여전히 하드코딩 더미값(`age=29, employment=재직`)을 사용하고 있었음. 이를 제거하고 실제 데이터로 연결.
+
+**구현 내용 (`nlp_input_module.py`)**
+
+| 항목 | 내용 |
+|---|---|
+| `POLICY_SLOTS` | 5개 서브슬롯: policy_employment / policy_income / policy_marriage / policy_education / policy_no_house |
+| `POLICY_QUESTIONS` | 각 슬롯별 한국어 질문 + 번호 선택지 |
+| `SLOT_DISPLAY` | 5개 슬롯 한글 레이블 추가 |
+| 파서 4개 신규 | `_parse_employment_choice()`, `_parse_marriage_choice()`, `_parse_education_choice()`, `_parse_no_house_choice()` — 번호(①~⑤) + 텍스트 양방향 파싱 |
+| `process()` fallback | `_last_asked_slot`이 policy_* 슬롯이면 해당 파서 호출 (policy_income은 `_parse_manwon()` 재사용) |
+| `_next_question()` | `use_youth_policy=True` 후 POLICY_SLOTS 순서대로 None인 슬롯 질문 (employment → income → marriage → education → no_house) |
+| `get_v5_params()` | 하드코딩 더미 완전 제거. `age = self.user_meta.get("age")` (JWT), 나머지는 슬롯 값 사용 |
+| `_build_summary()` | 청년정책 반영 시 "나이 N세 \| 취업상태 \| 소득 N만원 \| ..." 상세 출력 |
+| `slot_status()` | `use_youth_policy=True`인 경우 5개 슬롯 UI 패널에 추가 표시 |
+
+**구현 내용 (`webapp/main.py`)**
+
+| 항목 | 내용 |
+|---|---|
+| `_quick_options_for()` | policy_employment (5개 버튼) / policy_marriage (미혼·기혼) / policy_education (4개) / policy_no_house (무주택·주택소유) 빠른 선택 버튼 추가 |
+
+**검증 결과**
+- `use_youth_policy=True` 선택 후 5개 슬롯 순차 질문 ✅
+- `user_info["age"]` = JWT user_meta 값 (로그인 나이 26세 → 그대로 반영) ✅
+- 모든 policy 슬롯 수집 후 `_next_question() → None` (Done 처리) ✅
+- `get_v5_params()` 에서 하드코딩 제거, 실 데이터 연결 ✅
+
+**git 커밋**: `5c8b7d9` — feat: 청년정책 흐름 연결
+
+---
+
 ### 인증 시스템 통합 + git UI 매칭 (2026-05-05 3차)
 
 배경: 회원가입 정보(생년월일·성별)를 청년정책 1차 매칭에 활용하기 위해 로그인/회원가입 도입. UI는 https://github.com/min05ji26/Seoul_housing 레포에 맞춤.
@@ -304,6 +338,13 @@ SLOT_SCHEMA = {
     "vibe": list[str] | None,      # 9개 카테고리 다중 가능 (상관없음 → 빈 리스트)
     "vibe_unrecognized": str | None,
     "use_youth_policy": bool,
+
+    # 청년정책 세부 슬롯 (use_youth_policy=True 후 수집)
+    "policy_employment": str,      # "재직자"|"자영업자"|"미취업자"|"프리랜서"|"일경험없음"
+    "policy_income": str,          # 월 소득 만원 단위 (예: "250")
+    "policy_marriage": str,        # "미혼"|"기혼"
+    "policy_education": str,       # "고졸이하"|"대학재학"|"대졸"|"석박사"
+    "policy_no_house": str,        # "y"=무주택 / "n"=주택소유
 }
 ```
 
@@ -430,12 +471,13 @@ Claude Code 새 세션에서:
 2. 사용자가 새 오류 리포트를 가져오면 해당 오류부터 처리
 3. 오류 없으면 경진대회 마감(5/13) 전 남은 항목 확인:
 
-**✅ 완료된 항목 (2026-05-05 기준)**
+**✅ 완료된 항목 (2026-05-06 기준)**
 - 챗봇 슬롯 수집 / 추천 엔진 / 청년정책 매칭
 - vibe 8개 카테고리 통합
 - UI git 매칭 (집찾봇 브랜드, 카카오 버튼, 비밀번호찾기)
 - 회원가입/로그인 (이메일+비번, JWT, bcrypt 직접 사용)
 - DB 통합 (sqlite3 + DBeaver)
+- **청년정책 흐름 연결**: JWT 나이/성별 + 챗봇 5개 슬롯(취업·소득·혼인·학력·무주택) → youth_policy_module 실 데이터 연결. 하드코딩 더미 완전 제거.
 
 **🔄 권장 추가 작업 (시간 여유 시)**
 - **회원가입 설계 메모 권장사항 반영**:
