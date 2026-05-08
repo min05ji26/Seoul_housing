@@ -1,8 +1,14 @@
 "use strict";
 
 // ── 상태 ─────────────────────────────────────────────────
-let sessionId = null;
-let isWaiting = false;
+let sessionId      = null;
+let isWaiting      = false;
+let isRecommending = false;
+
+// ── 세션스토리지 키 ──────────────────────────────────────
+const CHAT_HISTORY_KEY = "chat_history";
+const REC_CACHE_KEY    = "rec_results_cache";
+const SESSION_ID_KEY   = "chat_session_id";
 
 // ── 인증 토큰 ────────────────────────────────────────────
 function getAuthHeaders() {
@@ -33,19 +39,39 @@ const PROGRESS_STEPS = [
 
 // ── 초기화 ───────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
-  // 이전 추천 결과 있으면 사이드바 "주거 추천" 활성화
   if (localStorage.getItem("rec_session_id")) enableRecNav();
 
   renderProgressList([]);
   renderConditionTable([]);
+
+  // 새로고침이면 채팅 기록 초기화, 내비게이션이면 기록 복원
+  const navType = (performance.getEntriesByType("navigation")[0] || {}).type;
+  if (navType === "reload") {
+    sessionStorage.removeItem(CHAT_HISTORY_KEY);
+    sessionStorage.removeItem(REC_CACHE_KEY);
+    sessionStorage.removeItem(SESSION_ID_KEY);
+    showInitialMessage();
+  } else {
+    sessionId = sessionStorage.getItem(SESSION_ID_KEY) || null;
+    const history = getChatHistory();
+    if (history.length) {
+      restoreChatHistory(history);
+    } else {
+      showInitialMessage();
+    }
+  }
+  inputEl.focus();
+});
+
+// ── 초기 메시지 ──────────────────────────────────────────
+function showInitialMessage() {
   appendBotMessage(
-    "안녕하세요! 저는 앱이름이에요 🏠\n\n" +
+    "안녕하세요! 저는 집찾봇이에요 🏠\n\n" +
     "서울시 공공데이터를 기반으로 최적의 주거지를 찾아드릴게요.\n" +
     "몇 가지 질문에 답해주시면 바로 추천해드릴게요!\n\n" +
     "어디서 일하실 예정인가요?\n직장 주소나 지하철역을 알려주세요."
   );
-  inputEl.focus();
-});
+}
 
 // ── 이벤트 ───────────────────────────────────────────────
 sendBtn.addEventListener("click", () => sendMessage());
@@ -80,18 +106,19 @@ async function sendMessage(text) {
     const data = await res.json();
 
     sessionId = data.session_id;
+    sessionStorage.setItem(SESSION_ID_KEY, sessionId);
+
     appendBotMessage(data.bot_message);
     updatePanels(data.slot_status);
     renderQuickOptions(data.quick_options);
 
     if (data.is_complete) {
-      // 세션 ID를 localStorage에 저장 → 추천 결과 페이지에서 불러옴
       localStorage.setItem("rec_session_id", sessionId);
-      // 현재 검색 조건 칩 저장 (추천 페이지 요약 바용)
       saveCondChips(data.slot_status);
-      // 사이드바 "주거 추천" 활성화
       enableRecNav();
       resultsBtnEl.classList.add("visible");
+      // 자동으로 추천 시작 (600ms 딜레이: 봇 메시지 읽을 시간 확보)
+      setTimeout(() => startRecommendation(sessionId), 600);
     }
   } catch (err) {
     appendBotMessage("오류가 발생했습니다. 잠시 후 다시 시도해 주세요.");
@@ -99,6 +126,101 @@ async function sendMessage(text) {
   } finally {
     setWaiting(false);
   }
+}
+
+// ── 자동 추천 실행 ───────────────────────────────────────
+async function startRecommendation(sid) {
+  if (isRecommending) return;
+  isRecommending = true;
+
+  appendBotMessage("추천을 시작할게요 🔍\n잠시만 기다려 주세요...");
+  setWaiting(true);
+
+  try {
+    const res  = await fetch("/api/recommend", {
+      method:  "POST",
+      headers: getAuthHeaders(),
+      body:    JSON.stringify({ session_id: sid }),
+    });
+    const data = await res.json();
+
+    if (!res.ok || data.error) {
+      const rawErr = data.error || "";
+      if (rawErr.includes("kakao") || rawErr.includes("ConnectionPool") || rawErr.includes("getaddrinfo")) {
+        appendBotMessage(
+          "주소 검색 서비스 연결에 실패했어요.\n" +
+          "네트워크를 확인하고 '주거 추천 결과 보기' 버튼으로 다시 시도해 주세요."
+        );
+      } else {
+        appendBotMessage(
+          "추천 중 오류가 발생했어요.\n" +
+          "'주거 추천 결과 보기' 버튼을 눌러 다시 시도해 보세요."
+        );
+      }
+      return;
+    }
+
+    const results = data.results || [];
+    const count   = results.length;
+
+    // 결과 sessionStorage 캐싱 (추천 페이지에서 재사용)
+    sessionStorage.setItem(REC_CACHE_KEY, JSON.stringify({
+      results:   data.results,
+      seoul_avg: data.seoul_avg || null,
+    }));
+    localStorage.setItem("rec_result_count", String(count));
+    enableRecNav();
+
+    if (count > 0) {
+      appendBotMessage(
+        `추천이 완료됐어요! 🎉\n총 ${count}곳을 추천해드릴게요.\n아래 버튼을 눌러 결과를 확인해 보세요!`
+      );
+    } else {
+      appendBotMessage(
+        "조건에 맞는 매물이 없어요 😥\n조건을 조금 완화해서 다시 시도해 보세요."
+      );
+    }
+  } catch (err) {
+    appendBotMessage("추천 중 오류가 발생했어요. 잠시 후 다시 시도해 주세요.");
+    console.error(err);
+  } finally {
+    setWaiting(false);
+    isRecommending = false;
+  }
+}
+
+// ── 새 추천 시작 (초기화) ────────────────────────────────
+function resetChat() {
+  // 세션스토리지 초기화
+  sessionStorage.removeItem(CHAT_HISTORY_KEY);
+  sessionStorage.removeItem(REC_CACHE_KEY);
+  sessionStorage.removeItem(SESSION_ID_KEY);
+  // localStorage 추천 관련 초기화
+  localStorage.removeItem("rec_session_id");
+  localStorage.removeItem("rec_result_count");
+  localStorage.removeItem("rec_cond_chips");
+
+  // 상태 초기화
+  sessionId      = null;
+  isRecommending = false;
+
+  // UI 초기화
+  messagesEl.innerHTML = "";
+  clearQuickOptions();
+  resultsBtnEl.classList.remove("visible");
+  renderProgressList([]);
+  renderConditionTable([]);
+
+  const condSection = document.getElementById("current-conditions");
+  if (condSection) condSection.style.display = "none";
+
+  const navRec   = document.getElementById("nav-rec");
+  const navBadge = document.getElementById("nav-rec-badge");
+  if (navRec)   navRec.classList.add("disabled");
+  if (navBadge) { navBadge.textContent = ""; navBadge.style.display = "none"; }
+
+  showInitialMessage();
+  inputEl.focus();
 }
 
 // ── 추천 결과 페이지로 이동 ──────────────────────────────
@@ -133,7 +255,6 @@ function enableRecNav() {
     navRec.classList.remove("disabled");
     navRec.href = "/recommendation";
   }
-  // 매물 수 표시 (0건/미실행이면 숨김)
   if (navBadge) {
     const count = parseInt(localStorage.getItem("rec_result_count") || "0", 10);
     if (count > 0) {
@@ -147,8 +268,9 @@ function enableRecNav() {
 }
 
 // ── 말풍선 ───────────────────────────────────────────────
-function appendBotMessage(text) {
+function appendBotMessage(text, skipSave = false) {
   removeTyping();
+  if (!skipSave) saveChatMessage("bot", text);
   const group = document.createElement("div");
   group.className = "msg-group bot";
   group.innerHTML = `
@@ -159,7 +281,8 @@ function appendBotMessage(text) {
   scrollBottom();
 }
 
-function appendUserMessage(text) {
+function appendUserMessage(text, skipSave = false) {
+  if (!skipSave) saveChatMessage("user", text);
   const group = document.createElement("div");
   group.className = "msg-group user";
   group.innerHTML = `
@@ -196,6 +319,26 @@ function scrollBottom() {
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
+// ── 채팅 기록 (sessionStorage) ──────────────────────────
+function saveChatMessage(role, text) {
+  const history = getChatHistory();
+  history.push({ role, text, time: nowTime() });
+  sessionStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(history));
+}
+
+function getChatHistory() {
+  try {
+    return JSON.parse(sessionStorage.getItem(CHAT_HISTORY_KEY) || "[]");
+  } catch { return []; }
+}
+
+function restoreChatHistory(history) {
+  history.forEach(msg => {
+    if (msg.role === "bot") appendBotMessage(msg.text, true);
+    else                    appendUserMessage(msg.text, true);
+  });
+}
+
 // ── 빠른 옵션 ────────────────────────────────────────────
 function renderQuickOptions(options) {
   clearQuickOptions();
@@ -226,7 +369,6 @@ function renderProgressList(slots) {
   const filled = {};
   (slots || []).forEach(s => { if (s.filled) filled[s.key] = s.value; });
 
-  // budget 특수 처리: deposit + monthly
   const hasBudget = filled["deposit_manwon"] || filled["rent_type"];
   if (hasBudget) filled["budget"] = budgetLabel(filled);
 

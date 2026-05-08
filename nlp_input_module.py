@@ -880,18 +880,27 @@ class ChatBot:
         if vibe:
             lines.append(f"- 동네 분위기: {', '.join(vibe)}")
         if s.get("use_youth_policy"):
-            emp  = s.get("policy_employment", "")
-            inc  = s.get("policy_income", "")
-            mrg  = s.get("policy_marriage", "")
-            edu  = s.get("policy_education", "")
-            nh   = "무주택" if s.get("policy_no_house") == "y" else "주택소유" if s.get("policy_no_house") == "n" else ""
-            age  = self.user_meta.get("age", "")
-            detail = "  |  ".join(filter(None, [
-                f"나이 {age}세" if age else "",
-                emp, f"소득 {inc}만원" if inc else "",
-                mrg, edu, nh,
-            ]))
-            lines.append(f"- 청년정책: 반영  ({detail})" if detail else "- 청년정책: 반영")
+            selected = s.get("selected_policies") or []
+            if selected:
+                # 절감액 내림차순 정렬 → 1위 정책명 + 나머지 건수
+                sorted_sel = sorted(selected, key=lambda p: p.get("_monthly_saving", 0), reverse=True)
+                top_name = sorted_sel[0].get("plcyNm", "정책")
+                rest = len(sorted_sel) - 1
+                policy_str = f"{top_name} 외 {rest}건" if rest > 0 else top_name
+                lines.append(f"- 청년정책: {policy_str}")
+            else:
+                emp  = s.get("policy_employment", "")
+                inc  = s.get("policy_income", "")
+                mrg  = s.get("policy_marriage", "")
+                edu  = s.get("policy_education", "")
+                nh   = "무주택" if s.get("policy_no_house") == "y" else "주택소유" if s.get("policy_no_house") == "n" else ""
+                age  = self.user_meta.get("age", "")
+                detail = "  |  ".join(filter(None, [
+                    f"나이 {age}세" if age else "",
+                    emp, f"소득 {inc}만원" if inc else "",
+                    mrg, edu, nh,
+                ]))
+                lines.append(f"- 청년정책: 반영  ({detail})" if detail else "- 청년정책: 반영")
         return "\n".join(lines)
 
     # ── v5 파라미터 변환 ────────────────────────────────────

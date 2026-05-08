@@ -42,6 +42,21 @@ document.addEventListener("DOMContentLoaded", () => {
     return;
   }
   attachControlHandlers();
+
+  // 챗봇에서 자동 추천한 결과가 sessionStorage에 있으면 API 재호출 없이 바로 렌더링
+  const cached = sessionStorage.getItem("rec_results_cache");
+  if (cached) {
+    try {
+      const parsed = JSON.parse(cached);
+      _allResults = parsed.results   || [];
+      _seoulAvg   = parsed.seoul_avg || null;
+      if (_allResults.length) {
+        renderPage();
+        return;
+      }
+    } catch { /* 파싱 실패 시 API 재호출 */ }
+  }
+
   loadResults(sessionId);
 });
 

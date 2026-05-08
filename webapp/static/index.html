@@ -67,7 +67,10 @@
   <section id="chat-area">
     <div id="chat-header">
       <span id="chat-title">챗봇으로 찾기</span>
-      <button id="result-btn" onclick="scrollToResults()">주거 추천 결과 보기 →</button>
+      <div class="chat-header-actions">
+        <button id="reset-btn" onclick="resetChat()">새 추천 시작</button>
+        <button id="result-btn" onclick="scrollToResults()">주거 추천 결과 보기 →</button>
+      </div>
     </div>
 
     <div id="messages"></div>

@@ -156,6 +156,25 @@ html, body { height: 100%; font-family: var(--font); background: var(--bg-card);
 }
 #chat-title { font-weight: 900; font-size: 20px; }
 
+.chat-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+#reset-btn {
+  background: transparent;
+  color: var(--fg-secondary);
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: var(--font);
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
+}
+#reset-btn:hover { background: var(--bg-hover, #f3f4f6); color: var(--fg); }
 #result-btn {
   background: var(--green);
   color: white;

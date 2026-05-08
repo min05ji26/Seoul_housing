@@ -1,6 +1,6 @@
 # Claude Code 인수인계 메모
 
-작성일: 2026-05-04 (최종 갱신: 2026-05-07 8차)
+작성일: 2026-05-04 (최종 갱신: 2026-05-08 9차)
 환경: Claude.ai → Claude Code (현재 작업 환경: 데스크탑 kj77k)
 
 ---
@@ -14,7 +14,7 @@
 3. `vibe_매핑_설계.md` — vibe 모듈 설계 + 학술 근거
 4. `phase7_챗봇_웹앱_설계.md` — 챗봇 + 웹앱 작업 지시서
 
-**현재 상태: 챗봇 버그 수정 완료, 추천 페이지 UI 포팅 완료, 카카오 API 재시도 안전장치 추가 완료**
+**현재 상태: 챗봇 조건 완료 시 자동 추천 실행 + 실시간 진행 메시지 + 채팅 기록 보존 + 새 추천 시작 버튼 추가 완료**
 
 ---
 
@@ -314,6 +314,49 @@
   - `geocode_address_kakao()`, `get_drive_route_kakaomobility()`, `_get_nearest_infra_distance()` 내 `requests.get()` → `_kakao_request()` 교체
 
 결과: 정상 주소 좌표 변환 성공, 재시도 로그 미출력 확인. 서버 재시작 완료.
+
+---
+
+### 자동 추천 + 채팅 기록 보존 + UX 개선 (2026-05-08 9차)
+
+#### 청년정책 완료 요약 메시지 개선 (Work Bundle #2 Problem 1)
+- `nlp_input_module.py` `_build_summary()`: `use_youth_policy=True`이고 `selected_policies`가 비어있지 않을 때, 기존 조건 상세(`나이 N세 | 취업상태...`) 대신 **가장 높은 절감액 정책 이름 + "외 N건"** 형식으로 표시.
+  - 예: `- 청년정책: 서울청년 월세 지원 외 2건`
+  - `sorted(selected, key=lambda p: p.get("_monthly_saving", 0), reverse=True)` 기준 정렬
+
+#### 챗봇 자동 추천 실행 + 실시간 진행 메시지 (Work Bundle #2 Problem 3)
+- `webapp/static/app.js` `sendMessage()`: `data.is_complete=True` 시 600ms 후 `startRecommendation(sessionId)` 자동 호출
+- `startRecommendation(sid)` 신규 함수:
+  - 봇 메시지 "추천을 시작할게요 🔍\n잠시만 기다려 주세요..." 표시
+  - 타이핑 도트(setWaiting) 표시 중 `/api/recommend` POST
+  - 성공: `sessionStorage("rec_results_cache")` 에 `{results, seoul_avg}` 캐싱, `rec_result_count` 갱신, 배지 업데이트
+  - 완료 메시지: "추천이 완료됐어요! 🎉\n총 N곳을 추천해드릴게요."
+  - 오류: 카카오 연결 실패 / 일반 오류 각각 분기 안내
+  - `isRecommending` 플래그로 중복 호출 방지
+- `webapp/static/recommendation.js` `DOMContentLoaded()`: `sessionStorage("rec_results_cache")` 캐시 우선 확인 → 있으면 API 재호출 없이 즉시 렌더링. 없으면 기존 `/api/recommend` 직접 호출.
+
+#### 채팅 기록 sessionStorage 보존 (Work Bundle #2 Problem 4)
+- `webapp/static/app.js`:
+  - **상수 3개**: `CHAT_HISTORY_KEY = "chat_history"`, `REC_CACHE_KEY = "rec_results_cache"`, `SESSION_ID_KEY = "chat_session_id"`
+  - **`saveChatMessage(role, text)`**: sessionStorage에 `{role, text, time}` 배열로 누적 저장
+  - **`getChatHistory()`**: sessionStorage에서 파싱, 실패 시 빈 배열
+  - **`restoreChatHistory(history)`**: 저장된 메시지 복원 (skipSave=true로 중복 저장 방지)
+  - **`appendBotMessage(text, skipSave=false)`** / **`appendUserMessage(text, skipSave=false)`**: 기본으로 sessionStorage 저장
+  - **DOMContentLoaded 분기**:
+    - `performance.getEntriesByType("navigation")[0].type === "reload"` → sessionStorage 전체 초기화 → `showInitialMessage()`
+    - 그 외(뒤로가기/내비게이션) → sessionId 복원 + 기록 있으면 `restoreChatHistory()`, 없으면 `showInitialMessage()`
+  - `sendMessage()`: `sessionId` 갱신 시 `sessionStorage.setItem(SESSION_ID_KEY)` 동기화
+
+#### "새 추천 시작" 버튼 (Work Bundle #2 Problem 4)
+- `webapp/static/index.html` `#chat-header`: 기존 `#result-btn` 앞에 `#reset-btn` 추가. `.chat-header-actions` div로 두 버튼 감쌈.
+- `webapp/static/app.js` `resetChat()` 신규 함수:
+  - sessionStorage 3개 키 + localStorage rec 관련 3개 키 삭제
+  - DOM 초기화: 메시지 영역 비움, 빠른 옵션 비움, result-btn 숨김, 진행도 패널 초기화, 사이드바 배지 숨김
+  - 상태 초기화: `sessionId=null`, `isRecommending=false`
+  - `showInitialMessage()` 호출 → 새 대화 시작
+- `webapp/static/style.css`: `.chat-header-actions { display: flex; gap: 8px }`, `#reset-btn` (투명 배경 + 테두리, hover 시 bg 변경)
+
+git 커밋: (본 세션 커밋 예정)
 
 ---
 
