@@ -356,7 +356,7 @@
   - `showInitialMessage()` 호출 → 새 대화 시작
 - `webapp/static/style.css`: `.chat-header-actions { display: flex; gap: 8px }`, `#reset-btn` (투명 배경 + 테두리, hover 시 bg 변경)
 
-git 커밋: (본 세션 커밋 예정)
+git 커밋: `7afcdcc` — feat: auto-recommend + chat history + reset button (9th session)
 
 ---
 
