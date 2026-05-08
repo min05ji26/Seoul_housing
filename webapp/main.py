@@ -157,6 +157,10 @@ async def chat(req: ChatRequest, request: Request):
 
 @app.post("/api/recommend")
 async def recommend(req: RecommendRequest):
+    import time
+    t0 = time.perf_counter()
+    print(f"[추천 API] 시작 session={req.session_id[:8]}...")
+
     bot = _get_bot(req.session_id)
     if not bot._done:
         return JSONResponse(status_code=400, content={"error": "슬롯 미완성"})
@@ -183,12 +187,16 @@ async def recommend(req: RecommendRequest):
         )
 
         results = _df_to_list(final_df)
+        elapsed = time.perf_counter() - t0
+        print(f"[추천 API] 완료 {elapsed:.1f}s, 결과={len(results)}건")
         return {
             "results":    results,
             "seoul_avg":  seoul_avg,
             "log":        log_buf.getvalue()[-2000:],
         }
     except Exception as e:
+        elapsed = time.perf_counter() - t0
+        print(f"[추천 API] 오류 {elapsed:.1f}s — {e}")
         return JSONResponse(status_code=500, content={"error": str(e)})
     finally:
         sys.stdout = old_stdout
@@ -296,41 +304,8 @@ def _quick_options_for(slot: Optional[str], bot: ChatBot) -> list:
     # 추천 완료 후에는 빠른 옵션 미표시
     if bot._done:
         return []
-    if slot == "transport_mode":
-        return [{"label": "자가용", "value": "자가용"}, {"label": "대중교통", "value": "대중교통"}]
-    if slot == "rent_type":
-        return [{"label": "전세", "value": "전세"}, {"label": "월세", "value": "월세"}]
-    if slot == "house_type":
-        return [
-            {"label": "오피스텔", "value": "① 오피스텔"},
-            {"label": "연립·다세대", "value": "② 연립다세대"},
-            {"label": "상관없음", "value": "③"},
-        ]
-    if slot == "weight_preference":
-        return [
-            {"label": "통근 우선", "value": "① 통근 우선"},
-            {"label": "주거비 우선", "value": "② 주거비 우선"},
-            {"label": "균형", "value": "③ 균형"},
-            {"label": "직접 설정", "value": "④ 직접 설정"},
-        ]
-    # vibe 질문 중
-    if bot._asked_vibe and bot.slots.get("vibe") is None and not bot._asked_policy:
-        return [
-            {"label": "조용함",    "value": "① 조용함"},
-            {"label": "번화함",    "value": "② 번화함"},
-            {"label": "청년활기",  "value": "③ 청년활기"},
-            {"label": "가족친화",  "value": "④ 가족친화"},
-            {"label": "자연친화",  "value": "⑤ 자연친화"},
-            {"label": "편의 우선", "value": "⑥ 편의 우선"},
-            {"label": "운동·건강", "value": "⑦ 운동·건강"},
-            {"label": "카페·문화", "value": "⑧ 카페·문화"},
-            {"label": "상관없음",  "value": "⑨ 상관없음"},
-        ]
-    # 청년정책 예/아니요
-    if bot._asked_policy and bot.slots.get("use_youth_policy") is None:
-        return [{"label": "예", "value": "예"}, {"label": "아니요", "value": "아니요"}]
 
-    # 청년정책 세부 슬롯 버튼 (use_youth_policy=True 후)
+    # ── 청년정책 세부 슬롯 — "이전으로" 없이 바로 리턴 ──────────────
     if bot.slots.get("use_youth_policy") and bot._last_asked_slot:
         asked = bot._last_asked_slot
         if asked == "policy_employment" and bot.slots.get("policy_employment") is None:
@@ -340,14 +315,12 @@ def _quick_options_for(slot: Optional[str], bot: ChatBot) -> list:
                 {"label": "자영업자",  "value": "자영업자"},
             ]
         if asked == "policy_card_selection":
-            # 1차 필터 0건이면 "재입력" + "정책 없이 진행" 두 버튼
             cands = bot.slots.get("candidate_policies")
             if cands is not None and len(cands) == 0 and bot.slots.get("selected_policies") is None:
                 return [
                     {"label": "조건 다시 입력", "value": "재입력"},
                     {"label": "정책 없이 진행", "value": "없음"},
                 ]
-            # 카드 표시 중 — "없음" 버튼만 제공 (번호는 직접 입력)
             return [{"label": "정책 없이 진행", "value": "없음"}]
         if asked == "policy_marriage" and bot.slots.get("policy_marriage") is None:
             return [{"label": "미혼", "value": "① 미혼"}, {"label": "기혼", "value": "② 기혼"}]
@@ -363,4 +336,45 @@ def _quick_options_for(slot: Optional[str], bot: ChatBot) -> list:
                 {"label": "무주택 (없음)", "value": "① 무주택"},
                 {"label": "주택 소유",     "value": "② 주택소유"},
             ]
-    return []
+        return []
+
+    # ── 일반 슬롯 옵션 수집 → 마지막에 "이전으로" 추가 ────────────────
+    options: list = []
+
+    if slot == "transport_mode":
+        options = [{"label": "자가용", "value": "자가용"}, {"label": "대중교통", "value": "대중교통"}]
+    elif slot == "rent_type":
+        options = [{"label": "전세", "value": "전세"}, {"label": "월세", "value": "월세"}]
+    elif slot == "house_type":
+        options = [
+            {"label": "오피스텔",   "value": "① 오피스텔"},
+            {"label": "연립·다세대","value": "② 연립다세대"},
+            {"label": "상관없음",   "value": "③"},
+        ]
+    elif slot == "weight_preference":
+        options = [
+            {"label": "통근 우선",   "value": "① 통근 우선"},
+            {"label": "주거비 우선", "value": "② 주거비 우선"},
+            {"label": "균형",        "value": "③ 균형"},
+            {"label": "직접 설정",   "value": "④ 직접 설정"},
+        ]
+    elif bot._asked_vibe and bot.slots.get("vibe") is None and not bot._asked_policy:
+        options = [
+            {"label": "조용함",    "value": "① 조용함"},
+            {"label": "번화함",    "value": "② 번화함"},
+            {"label": "청년활기",  "value": "③ 청년활기"},
+            {"label": "가족친화",  "value": "④ 가족친화"},
+            {"label": "자연친화",  "value": "⑤ 자연친화"},
+            {"label": "편의 우선", "value": "⑥ 편의 우선"},
+            {"label": "운동·건강", "value": "⑦ 운동·건강"},
+            {"label": "카페·문화", "value": "⑧ 카페·문화"},
+            {"label": "상관없음",  "value": "⑨ 상관없음"},
+        ]
+    elif bot._asked_policy and bot.slots.get("use_youth_policy") is None:
+        options = [{"label": "예", "value": "예"}, {"label": "아니요", "value": "아니요"}]
+
+    # 필수 슬롯이 1개 이상 입력됐으면 "이전으로 ↩" 추가
+    if bot._slot_fill_order:
+        options.append({"label": "이전으로 ↩", "value": "__PREV__"})
+
+    return options

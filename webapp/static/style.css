@@ -286,6 +286,13 @@ html, body { height: 100%; font-family: var(--font); background: var(--bg-card);
   transition: background 0.15s, color 0.15s;
 }
 .quick-btn:hover { background: var(--green); color: white; }
+/* 이전으로 ↩ 버튼 — 보조(회색) 스타일 */
+.quick-btn.quick-btn-prev {
+  border-color: var(--border);
+  color: var(--fg-secondary);
+  font-weight: 500;
+}
+.quick-btn.quick-btn-prev:hover { background: var(--bg); color: var(--fg); }
 
 /* ── 입력창 ─────────────────────────────────────────── */
 #input-area {

@@ -5,6 +5,27 @@ let sessionId      = null;
 let isWaiting      = false;
 let isRecommending = false;
 
+// ── 슬롯 레이블 (친절한 표시용) ─────────────────────────
+const SLOT_DISPLAY_LABELS = {
+  "work_address":      "직장 주소",
+  "transport_mode":    "이동수단",
+  "rent_type":         "임대 유형",
+  "deposit_manwon":    "예산 (보증금)",
+  "monthly_manwon":    "예산 (월세)",
+  "allowed_minutes":   "통근 시간",
+  "house_type":        "주택 유형",
+  "weight_preference": "우선순위",
+};
+
+function friendlyCommandLabel(cmd) {
+  if (cmd === "__PREV__") return "이전으로 ↩";
+  if (cmd.startsWith("__EDIT:") && cmd.endsWith("__")) {
+    const slot = cmd.slice(7, -2);
+    return `✏️ ${SLOT_DISPLAY_LABELS[slot] || slot} 수정`;
+  }
+  return cmd;
+}
+
 // ── 세션스토리지 키 ──────────────────────────────────────
 const CHAT_HISTORY_KEY = "chat_history";
 const REC_CACHE_KEY    = "rec_results_cache";
@@ -94,7 +115,24 @@ async function sendMessage(text) {
   inputEl.value = "";
   inputEl.style.height = "auto";
   clearQuickOptions();
-  appendUserMessage(userText);
+
+  // ── 특수 명령: API 호출 없이 직접 처리 ──────────────────
+  if (userText === "__START_REC__") {
+    appendUserMessage("추천 시작하기 🏠");
+    startRecommendation(sessionId);
+    return;
+  }
+  if (userText === "__EDIT__") {
+    appendUserMessage("수정하기 ✏️");
+    showEditOptions();
+    return;
+  }
+
+  // ── 나머지 명령 / 일반 텍스트 ────────────────────────────
+  // __PREV__, __EDIT:*__ 은 raw command를 API에 전송하되
+  // 사용자 버블에는 친절한 레이블을 표시
+  const displayText = friendlyCommandLabel(userText);
+  appendUserMessage(displayText);
   setWaiting(true);
 
   try {
@@ -116,9 +154,11 @@ async function sendMessage(text) {
       localStorage.setItem("rec_session_id", sessionId);
       saveCondChips(data.slot_status);
       enableRecNav();
-      resultsBtnEl.classList.add("visible");
-      // 자동으로 추천 시작 (600ms 딜레이: 봇 메시지 읽을 시간 확보)
-      setTimeout(() => startRecommendation(sessionId), 600);
+      // 자동 추천 없음 — 사용자가 직접 선택
+      renderQuickOptions([
+        { label: "추천 시작 🏠", value: "__START_REC__" },
+        { label: "수정하기 ✏️",  value: "__EDIT__" },
+      ]);
     }
   } catch (err) {
     appendBotMessage("오류가 발생했습니다. 잠시 후 다시 시도해 주세요.");
@@ -175,6 +215,8 @@ async function startRecommendation(sid) {
       appendBotMessage(
         `추천이 완료됐어요! 🎉\n총 ${count}곳을 추천해드릴게요.\n아래 버튼을 눌러 결과를 확인해 보세요!`
       );
+      // 추천 완료 후에야 버튼 활성화 (문제 5·6 fix)
+      resultsBtnEl.classList.add("visible");
     } else {
       appendBotMessage(
         "조건에 맞는 매물이 없어요 😥\n조건을 조금 완화해서 다시 시도해 보세요."
@@ -187,6 +229,20 @@ async function startRecommendation(sid) {
     setWaiting(false);
     isRecommending = false;
   }
+}
+
+// ── 수정하기: 항목 선택 버튼 표시 ───────────────────────
+function showEditOptions() {
+  appendBotMessage("어떤 항목을 수정하시겠어요? 🔧");
+  renderQuickOptions([
+    { label: "직장 주소",   value: "__EDIT:work_address__" },
+    { label: "이동수단",    value: "__EDIT:transport_mode__" },
+    { label: "임대 유형",   value: "__EDIT:rent_type__" },
+    { label: "예산",        value: "__EDIT:deposit_manwon__" },
+    { label: "통근 시간",   value: "__EDIT:allowed_minutes__" },
+    { label: "주택 유형",   value: "__EDIT:house_type__" },
+    { label: "우선순위",    value: "__EDIT:weight_preference__" },
+  ]);
 }
 
 // ── 새 추천 시작 (초기화) ────────────────────────────────
@@ -345,7 +401,9 @@ function renderQuickOptions(options) {
   if (!options || !options.length) return;
   options.forEach((opt) => {
     const btn = document.createElement("button");
-    btn.className = "quick-btn";
+    // "이전으로 ↩" 는 보조 스타일 적용
+    const isPrev = (opt.value === "__PREV__");
+    btn.className = "quick-btn" + (isPrev ? " quick-btn-prev" : "");
     btn.textContent = opt.label;
     btn.onclick = () => sendMessage(opt.value);
     quickOptEl.appendChild(btn);

@@ -192,6 +192,8 @@ class ChatBot:
         self._selection_error: Optional[str] = None   # 카드 선택 충돌 오류
         self.policy_cards: Optional[List[Dict]] = None # /api/chat 응답용 카드 데이터
         self.has_more_policy_cards: bool = False       # "더보기" 가능 여부
+        # ── 슬롯 입력 순서 추적 (이전으로/수정하기 기능용) ──
+        self._slot_fill_order: List[str] = []
 
     # ── 필수 슬롯 확인 ──────────────────────────────────────
 
@@ -211,6 +213,10 @@ class ChatBot:
         for k, v in new_slots.items():
             if v is not None and self.slots.get(k) is None:
                 self.slots[k] = v
+                # 필수 슬롯 입력 순서 추적 (이전으로/수정하기 기능용)
+                if k in REQUIRED_SLOTS or k == "monthly_manwon":
+                    if k not in self._slot_fill_order:
+                        self._slot_fill_order.append(k)
         if "vibe_unrecognized" in new_slots and new_slots["vibe_unrecognized"]:
             self.vibe_unrecognized = new_slots["vibe_unrecognized"]
 
@@ -652,9 +658,57 @@ class ChatBot:
         lines.append("정책이 없으면 '없음'을 입력해 주세요.")
         return "\n".join(lines)
 
+    # ── 이전으로 / 수정하기 헬퍼 ──────────────────────────
+
+    def _undo_last_slot(self):
+        """__PREV__ 명령 — 마지막 입력 슬롯을 취소하고 해당 질문 재출력."""
+        if not self._slot_fill_order:
+            return "이전에 입력한 내용이 없어요.", False, None
+        last_slot = self._slot_fill_order.pop()
+        self.slots.pop(last_slot, None)
+        # rent_type 취소 시 deposit_manwon / monthly_manwon도 연동 취소
+        if last_slot == "rent_type":
+            for linked in ["deposit_manwon", "monthly_manwon"]:
+                self.slots.pop(linked, None)
+                if linked in self._slot_fill_order:
+                    self._slot_fill_order.remove(linked)
+        self._last_asked_slot = last_slot
+        return (
+            f"다시 입력해 주세요 🔄\n\n{SLOT_QUESTIONS.get(last_slot, '다시 답해주세요.')}",
+            False, None,
+        )
+
+    def _edit_slot(self, slot: str):
+        """__EDIT:slot__ 명령 — 특정 슬롯을 초기화하고 해당 질문 재출력."""
+        valid = list(REQUIRED_SLOTS) + ["monthly_manwon"]
+        if slot not in valid:
+            return "수정할 항목을 찾을 수 없어요.", self._done, None
+        self._done = False
+        self.slots.pop(slot, None)
+        if slot in self._slot_fill_order:
+            self._slot_fill_order.remove(slot)
+        # rent_type 수정 시 deposit_manwon / monthly_manwon도 연동 초기화
+        if slot == "rent_type":
+            for linked in ["deposit_manwon", "monthly_manwon"]:
+                self.slots.pop(linked, None)
+                if linked in self._slot_fill_order:
+                    self._slot_fill_order.remove(linked)
+        self._last_asked_slot = slot
+        return (
+            f"수정할게요 ✏️\n\n{SLOT_QUESTIONS.get(slot, '다시 답해주세요.')}",
+            False, None,
+        )
+
     # ── 메인 process() ─────────────────────────────────────
 
     def process(self, user_text: str):
+        # ── 특수 명령 처리 (완료 전/후 모두 허용) ────────────
+        _t = user_text.strip()
+        if _t == "__PREV__":
+            return self._undo_last_slot()
+        if _t.startswith("__EDIT:") and _t.endswith("__"):
+            return self._edit_slot(_t[7:-2])
+
         if self._done:
             return "이미 추천이 완료되었습니다. 새로 시작하려면 페이지를 새로고침해 주세요.", True, None
 
@@ -859,7 +913,7 @@ class ChatBot:
         s = self.slots
         rt  = s.get("rent_type", "전세")
         dep = s.get("deposit_manwon", 0)
-        lines = ["조건이 모두 입력됐어요. 지금 바로 추천을 시작할게요!\n", "**입력 조건 요약**"]
+        lines = ["조건이 모두 입력됐어요! 아래 버튼으로 추천을 시작하거나 조건을 수정할 수 있어요.\n", "**입력 조건 요약**"]
         lines.append(f"- 직장: {s.get('work_address','')}")
         lines.append(f"- 이동수단: {'자가용' if s.get('transport_mode')=='car' else '대중교통'}")
         if rt == "월세":
