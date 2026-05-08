@@ -1,6 +1,6 @@
 # Claude Code 인수인계 메모
 
-작성일: 2026-05-04 (최종 갱신: 2026-05-08 9차)
+작성일: 2026-05-04 (최종 갱신: 2026-05-09 10차)
 환경: Claude.ai → Claude Code (현재 작업 환경: 데스크탑 kj77k)
 
 ---
@@ -14,7 +14,7 @@
 3. `vibe_매핑_설계.md` — vibe 모듈 설계 + 학술 근거
 4. `phase7_챗봇_웹앱_설계.md` — 챗봇 + 웹앱 작업 지시서
 
-**현재 상태: 챗봇 조건 완료 시 자동 추천 실행 + 실시간 진행 메시지 + 채팅 기록 보존 + 새 추천 시작 버튼 추가 완료**
+**현재 상태: 이전으로/수정하기 버튼 + 명시적 추천 시작 버튼 + 버튼 타이밍 fix 완료. 청년정책 혜택 표시 오류(문제 1) 및 필터 기준(문제 4) 수정 방향은 사용자와 협의 중.**
 
 ---
 
@@ -357,6 +357,66 @@
 - `webapp/static/style.css`: `.chat-header-actions { display: flex; gap: 8px }`, `#reset-btn` (투명 배경 + 테두리, hover 시 bg 변경)
 
 git 커밋: `7afcdcc` — feat: auto-recommend + chat history + reset button (9th session)
+
+---
+
+### 이전으로/수정하기 + 명시적 추천 시작 + 버튼 타이밍 fix (2026-05-09 10차)
+
+#### Work Bundle #3 — 구현 완료 항목
+
+##### 문제 2: 이전으로 / 수정하기 기능
+
+**`nlp_input_module.py`**
+
+| 추가 | 내용 |
+|------|------|
+| `_slot_fill_order: List[str]` | `__init__`에 추가. 필수 슬롯(REQUIRED_SLOTS + monthly_manwon) 입력 순서 기록 |
+| `_merge_slots()` | 슬롯 채울 때마다 `_slot_fill_order`에 key 추가 (중복 방지) |
+| `_undo_last_slot()` | `__PREV__` 명령 처리. 마지막 입력 슬롯 꺼내 `slots`에서 제거, 해당 질문 재출력. `rent_type` 취소 시 `deposit_manwon`/`monthly_manwon` 연동 초기화 |
+| `_edit_slot(slot)` | `__EDIT:slot__` 명령 처리. `_done=False` 리셋, 해당 슬롯 초기화, 재질문. `rent_type` 수정 시 동일 연동 초기화 |
+| `process()` 최상단 | `__PREV__` → `_undo_last_slot()`, `__EDIT:*__` → `_edit_slot()` 인터셉트 (완료 전/후 모두 허용) |
+| `_build_summary()` | 자동 추천 문구 제거 → "추천 시작하거나 수정 가능" 안내로 변경 |
+
+**`webapp/main.py` `_quick_options_for()` 리팩터**
+- 청년정책 세부 슬롯: 기존과 동일, 변경 없음 (바로 return)
+- 일반 슬롯: `options = [...]` 수집 후 `bot._slot_fill_order` 비어있지 않으면 `{"label": "이전으로 ↩", "value": "__PREV__"}` 마지막에 추가
+
+**`app.js`**
+- `SLOT_DISPLAY_LABELS` 상수 + `friendlyCommandLabel(cmd)` 헬퍼 추가
+- `sendMessage()`:
+  - `__START_REC__` → 로컬 처리: 사용자 버블 "추천 시작하기 🏠" + `startRecommendation()` 직접 호출
+  - `__EDIT__` → 로컬 처리: 사용자 버블 "수정하기 ✏️" + `showEditOptions()` 호출
+  - `__PREV__` / `__EDIT:*__` → `friendlyCommandLabel()`로 버블 표시, raw command는 API 전송
+- `showEditOptions()` 신규: "어떤 항목을 수정하시겠어요? 🔧" + 7개 슬롯 버튼
+- `renderQuickOptions()`: `__PREV__` value면 `.quick-btn-prev` 클래스 추가
+
+**`style.css`**: `.quick-btn.quick-btn-prev` — 회색 테두리/글자색 보조 스타일
+
+##### 문제 5 + 6: "주거 추천 결과 보기" 버튼 활성화 타이밍 및 결과 페이지 무한 로딩
+
+- `app.js` `sendMessage()` `is_complete` 블록:
+  - 기존: `resultsBtnEl.classList.add("visible")` + `setTimeout(startRecommendation, 600)` 자동 실행
+  - 변경: 버튼 활성화 제거, 자동 추천 제거. 대신 `renderQuickOptions(["추천 시작 🏠", "수정하기 ✏️"])` 표시
+- `app.js` `startRecommendation()` 성공 블록:
+  - `count > 0` 확인 후 `resultsBtnEl.classList.add("visible")` 이동 (추천 완료 후에만 활성화)
+  - 이 시점에 `sessionStorage(rec_results_cache)` 캐시도 이미 저장됨 → 결과 페이지 즉시 렌더링
+
+##### main.py 타이밍 로그
+- `recommend()` 함수에 `time.perf_counter()` 기반 `[추천 API] 시작/완료/오류` 로그 추가
+
+#### Work Bundle #3 — 진단 완료, 수정 방향 협의 중
+
+##### 문제 1: 정책 카드 혜택·절감액이 모두 동일하게 표시
+- 원인: `analyze_benefit()`의 `BENEFIT_PATTERNS` 정규식이 시설 운영 유형 정책 텍스트에 매칭 안 됨 → 폴백(`monthly_saving=2.0, type="주거관련"`)으로 전부 동일 처리
+- 수정 방향 후보: A(패턴 추가), B(폴백 텍스트만 변경), C(폴백 정책 카드 제외) — **사용자 협의 중**
+
+##### 문제 4: 청년정책 필터 기준
+- 이슈 ①: `_is_seoul_policy()` — zipCd 앞 2자리 "11"로 서울 25개 구 전체 허용 (직장 구 무관)
+- 이슈 ②: 시설 운영 유형 정책이 "주거관련"으로 통과
+- 이슈 ③: 대부분 동점(2.0만원)으로 정렬 신뢰성 없음 (문제 1과 연동)
+- **수정 방향 사용자 협의 중**
+
+git 커밋: `ebef1dc` — feat: prev/edit buttons + explicit rec start + button timing fix (10th session)
 
 ---
 
