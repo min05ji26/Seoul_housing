@@ -204,11 +204,26 @@ class ChatBot:
     # ── 필수 슬롯 확인 ──────────────────────────────────────
 
     def _missing_required(self) -> List[str]:
+        return [s for s in self._required_order() if self.slots.get(s) is None]
+
+    def _required_order(self) -> List[str]:
+        """필수 슬롯 질문 순서 (rent_type='월세'면 monthly_manwon 포함)."""
         order = ["work_address", "transport_mode", "rent_type", "deposit_manwon"]
         if self.slots.get("rent_type") == "월세":
             order.append("monthly_manwon")
         order += ["allowed_minutes", "house_type", "weight_preference"]
-        return [s for s in order if self.slots.get(s) is None]
+        return order
+
+    def _question_order(self) -> List[str]:
+        """전체 질문 순서 (필수 + vibe/policy까지 — PREV용)."""
+        order = list(self._required_order())
+        if self._asked_vibe:
+            order.append("vibe")
+        if self._asked_policy:
+            order.append("use_youth_policy")
+        if self.slots.get("use_youth_policy"):
+            order += POLICY_SLOTS
+        return order
 
     def _is_slots_complete(self) -> bool:
         return len(self._missing_required()) == 0
@@ -244,6 +259,7 @@ class ChatBot:
             self._asked_vibe = True
             if self.slots.get("vibe") is not None:
                 return None  # 이미 추출됨
+            self._last_asked_slot = "vibe"
             if self.vibe_unrecognized:
                 return (
                     f"'{self.vibe_unrecognized}'은 통근시간으로 반영하실 수 있어요.\n"
@@ -261,6 +277,7 @@ class ChatBot:
         if not self._asked_policy:
             self._asked_policy = True
             if self.slots.get("use_youth_policy") is None:
+                self._last_asked_slot = "use_youth_policy"
                 return "현재 조건에 맞는 청년정책도 같이 확인하시겠어요? (예 / 아니요)"
 
         # 청년정책 자격 정보 수집 (v6.0 — 카드 단계 제거)
@@ -706,22 +723,73 @@ class ChatBot:
     # ── 이전으로 / 수정하기 헬퍼 ──────────────────────────
 
     def _undo_last_slot(self):
-        """__PREV__ 명령 — 마지막 입력 슬롯을 취소하고 해당 질문 재출력."""
-        if not self._slot_fill_order:
+        """__PREV__ 명령 — 현재 질문의 직전 질문으로 되돌리기.
+
+        `_slot_fill_order` LIFO 방식은 LLM이 한 턴에 여러 슬롯을 추출하거나
+        EDIT으로 fill_order가 흐트러진 경우 엉뚱한 슬롯을 pop하므로,
+        대화 흐름의 직전 질문(질문 순서 인덱스 -1)을 기준으로 되돌린다.
+        """
+        target = self._prev_question_slot()
+        if target is None:
             return "이전에 입력한 내용이 없어요.", False, None
-        last_slot = self._slot_fill_order.pop()
-        self.slots.pop(last_slot, None)
+
+        self.slots.pop(target, None)
+        if target in self._slot_fill_order:
+            self._slot_fill_order.remove(target)
         # rent_type 취소 시 deposit_manwon / monthly_manwon도 연동 취소
-        if last_slot == "rent_type":
+        if target == "rent_type":
             for linked in ["deposit_manwon", "monthly_manwon"]:
                 self.slots.pop(linked, None)
                 if linked in self._slot_fill_order:
                     self._slot_fill_order.remove(linked)
-        self._last_asked_slot = last_slot
-        return (
-            f"다시 입력해 주세요 🔄\n\n{SLOT_QUESTIONS.get(last_slot, '다시 답해주세요.')}",
-            False, None,
-        )
+
+        # 되돌아간 단계 이후의 흐름을 다시 살리기 위해 단계 플래그 리셋
+        # 필수 슬롯/직접설정으로 돌아가면 vibe·policy 모두 재질문
+        if target in self._required_order() or target == "weight_custom":
+            self._asked_vibe = False
+            self._asked_policy = False
+            self._policy_intro_shown = False
+        elif target == "vibe":
+            self._asked_policy = False
+            self._policy_intro_shown = False
+        elif target == "use_youth_policy":
+            self._policy_intro_shown = False
+
+        self._done = False
+        self._last_asked_slot = target
+        # 직전 질문 텍스트 복원
+        if target in SLOT_QUESTIONS:
+            q = SLOT_QUESTIONS[target]
+        elif target == "vibe":
+            q = (
+                "동네 분위기 선호가 있으신가요?\n"
+                "① 조용함 ② 번화함 ③ 청년활기 ④ 가족친화 ⑤ 자연친화 "
+                "⑥ 편의 우선 ⑦ 운동·건강 ⑧ 카페·문화 ⑨ 상관없음"
+            )
+        elif target == "use_youth_policy":
+            q = "현재 조건에 맞는 청년정책도 같이 확인하시겠어요? (예 / 아니요)"
+        elif target in POLICY_QUESTIONS:
+            q = POLICY_QUESTIONS[target]
+        else:
+            q = "다시 답해주세요."
+        return f"다시 입력해 주세요 🔄\n\n{q}", False, None
+
+    def _prev_question_slot(self) -> Optional[str]:
+        """현재 질문(_last_asked_slot 또는 다음 미답 슬롯)의 직전 질문 슬롯을 반환."""
+        order = self._question_order()
+        # 기준점: 봇이 가장 최근에 던진 질문 슬롯
+        anchor = self._last_asked_slot
+        if anchor not in order:
+            # vibe/policy 단계 또는 done 상태 — 기준은 가장 마지막 필수 질문
+            missing = [s for s in order if self.slots.get(s) is None]
+            anchor = missing[0] if missing else order[-1]
+        idx = order.index(anchor)
+        # 현재 질문이 이미 채워진 상태(예: done 후 PREV)면 그 자체를 직전 질문으로 본다
+        if self.slots.get(anchor) is not None:
+            return anchor
+        if idx == 0:
+            return None
+        return order[idx - 1]
 
     def _edit_slot(self, slot: str):
         """__EDIT:slot__ 명령 — 특정 슬롯을 초기화하고 해당 질문 재출력."""

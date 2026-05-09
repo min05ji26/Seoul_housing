@@ -1651,8 +1651,9 @@ def run_recommendation(housing_csv_path, work_address, transport_mode,
                 key = (gu, rent_type_label)
                 if key not in match_cache:
                     try:
+                        # 프론트에서 5개씩 페이지네이션하므로 매칭된 전체를 반환
                         pol_list, pol_total = match_policies_for_property(
-                            gu, rent_type_label, user_info, top_n=5
+                            gu, rent_type_label, user_info, top_n=100
                         )
                         match_cache[key] = (pol_list, pol_total)
                     except Exception as e:
