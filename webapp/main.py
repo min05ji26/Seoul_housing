@@ -346,7 +346,7 @@ def _quick_options_for(slot: Optional[str], bot: ChatBot) -> list:
                 {"label": "300~400만원", "value": "③ 300~400만원"},
                 {"label": "400~500만원", "value": "④ 400~500만원"},
                 {"label": "500만원 이상", "value": "⑤ 500만원 이상"},
-                {"label": "모름",          "value": "⑥ 모름"},
+                {"label": "모름(없음)",     "value": "⑥ 모름"},
             ]
         if asked == "policy_no_house" and bot.slots.get("policy_no_house") is None:
             return [

@@ -159,7 +159,7 @@ POLICY_QUESTIONS = {
         "③ 300~400만원\n"
         "④ 400~500만원\n"
         "⑤ 500만원 이상\n"
-        "⑥ 모름"
+        "⑥ 모름(없음)"
     ),
     "policy_no_house": (
         "현재 주택을 소유하고 계신가요?\n"
@@ -312,17 +312,19 @@ class ChatBot:
     }
 
     _HOUSE_MAP = {
-        "1": "오피스텔", "①": "오피스텔",
-        "2": "연립다세대", "②": "연립다세대",
-        "3": None, "③": None,
+        "①": "오피스텔",
+        "②": "연립다세대",
+        "③": None,
     }
+    # 단순 숫자 "1"~"4"는 주소 등 다른 입력에서 오작동하므로 원문자만 사용
 
     _WEIGHT_MAP = {
-        "1": "통근우선", "①": "통근우선",
-        "2": "주거비우선", "②": "주거비우선",
-        "3": "균형", "③": "균형",
-        "4": "직접설정", "④": "직접설정",
+        "①": "통근우선",
+        "②": "주거비우선",
+        "③": "균형",
+        "④": "직접설정",
     }
+    # 단순 숫자 "1"~"4"는 주소 등 다른 입력에서 오작동하므로 원문자만 사용
 
     @classmethod
     def _parse_vibe_choice(cls, text: str) -> Optional[List[str]]:
@@ -343,26 +345,33 @@ class ChatBot:
 
     @classmethod
     def _parse_house_choice(cls, text: str) -> Optional[str]:
+        # 원문자 우선 매칭
         for k, v in cls._HOUSE_MAP.items():
             if k in text:
                 return v
+        # 단어 경계 숫자 폴백 (주소·문장 속 숫자 오작동 방지)
+        if re.search(r"\b1\b", text): return "오피스텔"
+        if re.search(r"\b2\b", text): return "연립다세대"
+        if re.search(r"\b3\b", text): return None
         return None
 
     @classmethod
     def _parse_weight_choice(cls, text: str) -> Optional[str]:
+        # 원문자 우선 매칭
         for k, v in cls._WEIGHT_MAP.items():
             if k in text:
                 return v
-        if re.search(r"통근|출퇴근", text):
-            return "통근우선"
-        if re.search(r"주거비|비용|저렴", text):
-            return "주거비우선"
-        if re.search(r"균형|반반", text):
-            return "균형"
-        if re.search(r"직접\s*설정", text):
-            return "직접설정"
-        if re.search(r"알아서|위임|맡겨", text):
-            return "위임"
+        # 단어 경계 숫자 폴백 (주소·문장 속 숫자 오작동 방지)
+        if re.search(r"\b1\b", text): return "통근우선"
+        if re.search(r"\b2\b", text): return "주거비우선"
+        if re.search(r"\b3\b", text): return "균형"
+        if re.search(r"\b4\b", text): return "직접설정"
+        # 텍스트 키워드 매칭
+        if re.search(r"통근|출퇴근", text): return "통근우선"
+        if re.search(r"주거비|비용|저렴", text): return "주거비우선"
+        if re.search(r"균형|반반", text): return "균형"
+        if re.search(r"직접\s*설정", text): return "직접설정"
+        if re.search(r"알아서|위임|맡겨", text): return "위임"
         return None
 
     @staticmethod
@@ -483,22 +492,30 @@ class ChatBot:
 
     # 소득 구간 선택지 매핑 (v6.0 — INCOME_BAND_TO_MANWON 키와 일치)
     _INCOME_BAND_MAP = {
-        "1": "200만원 이하", "①": "200만원 이하",
-        "2": "200~300만원", "②": "200~300만원",
-        "3": "300~400만원", "③": "300~400만원",
-        "4": "400~500만원", "④": "400~500만원",
-        "5": "500만원 이상", "⑤": "500만원 이상",
-        "6": "모름",         "⑥": "모름",
+        "①": "200만원 이하",
+        "②": "200~300만원",
+        "③": "300~400만원",
+        "④": "400~500만원",
+        "⑤": "500만원 이상",
+        "⑥": "모름",
     }
+    # 단순 숫자 "1"~"6"은 주소·금액 텍스트에서 오작동하므로 원문자만 사용
 
     @classmethod
     def _parse_income_band_choice(cls, text: str) -> Optional[str]:
         """소득 구간 6선택지 파싱."""
         t = text.strip()
-        # 1) 번호 매칭
+        # 1) 원문자 매칭
         for k, v in cls._INCOME_BAND_MAP.items():
             if k in t:
                 return v
+        # 단어 경계 숫자 폴백
+        if re.search(r"\b6\b", t): return "모름"
+        if re.search(r"\b5\b", t): return "500만원 이상"
+        if re.search(r"\b4\b", t): return "400~500만원"
+        if re.search(r"\b3\b", t): return "300~400만원"
+        if re.search(r"\b2\b", t): return "200~300만원"
+        if re.search(r"\b1\b", t): return "200만원 이하"
         # 2) 텍스트 직접 매칭
         if re.search(r"모름|몰라|소득\s*없|없음", t):
             return "모름"
@@ -758,6 +775,16 @@ class ChatBot:
         # LLM 슬롯 추출
         new_slots = extract_slots_from_text(user_text, self.slots)
 
+        # ── LLM 추측 차단 가드 ─────────────────────────────
+        # LLM이 주소·자유발화에서 house_type / weight_preference 를 추측해 채우는 것을 방지.
+        # 봇이 해당 슬롯을 직접 물어보지 않은 상태에서, 파서도 값을 못 잡으면 LLM 결과를 무시.
+        if new_slots.get("house_type") is not None and self._last_asked_slot != "house_type":
+            if self._parse_house_choice(user_text) is None:
+                new_slots.pop("house_type", None)
+        if new_slots.get("weight_preference") is not None and self._last_asked_slot != "weight_preference":
+            if not self._parse_weight_choice(user_text):
+                new_slots.pop("weight_preference", None)
+
         # ── 컨텍스트 인식 폴백 ──────────────────────────────
         # 봇이 직전에 특정 슬롯을 물어봤는데 LLM이 그 슬롯을 못 잡은 경우,
         # 사용자 발화를 해당 슬롯 값으로 직접 사용
@@ -911,7 +938,7 @@ class ChatBot:
                    else "주택소유 모름" if nh_raw == ""
                    else "")
             age = self.user_meta.get("age", "")
-            inc_str = ("소득 모름" if inc == "모름"
+            inc_str = ("소득 없음" if inc == "모름"
                        else f"소득 {inc}" if inc else "")
             detail = "  |  ".join(filter(None, [
                 f"나이 {age}세" if age else "",
