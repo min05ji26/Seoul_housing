@@ -1,30 +1,34 @@
 """
 youth_policy_module.py
 ──────────────────────
-온통청년 청년정책 API 연동 모듈 (v5.2)
+청년 주거정책 모듈 (v6.0 — CSV 화이트리스트 기반)
 
-흐름:
-  1차) API 조회 + 기본 필터(나이/취업상태) → 후보 목록 표시
-  2차) 사용자가 관심 정책 선택
-  3차) 선택한 정책의 상세 조건 표시 → 사용자 충족 여부 확인
-  4차) 조건 충족된 정책만 점수 반영 + TOPSIS 4축 연결
+흐름 (v6.0):
+  1차) CSV 로드 → 자치구/임대유형/사용자 자격 필터
+  2차) 매물별 매칭 정책 표시 (점수 산출 X, 추천 점수에도 반영 X)
 
-API: https://www.youthcenter.go.kr/go/ythip/getPlcy
+CSV: webapp/data/seoul_youth_housing_policies.csv (서울 주거 정책 화이트리스트)
+이전 버전(v5.x): 온통청년 API 호출 + analyze_benefit 정규식 폴백 사용 (deprecated)
 """
 
 import os
 import re
-import time
-import requests
-from typing import Dict, List, Tuple
+import csv
+from typing import Dict, List, Tuple, Optional
 from dotenv import load_dotenv
 load_dotenv()
 
 # ──────────────────────────────────────────────────────────
-# 설정
+# 설정 — CSV 화이트리스트 경로
 # ──────────────────────────────────────────────────────────
+CSV_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "webapp", "data", "seoul_youth_housing_policies.csv"
+)
+
+# ── 구버전 호환 (env에 둬도 무방, 사용 안 함) ─────────────
 YOUTH_API_KEY = os.getenv("YOUTH_API_KEY", "")
-YOUTH_API_URL = "https://www.youthcenter.go.kr/go/ythip/getPlcy"
+YOUTH_API_URL = "https://www.youthcenter.go.kr/go/ythip/getPlcy"  # deprecated
 REQUEST_TIMEOUT = 20
 SLEEP_BETWEEN   = 0.5
 
@@ -56,9 +60,21 @@ SCHOOL_CODE = {
     "0049004": "석박사", "0049005": "제한없음",
 }
 
-# 소득 기준 상수 (보건복지부 고시 2024년 기준)
-MEDIAN_INCOME_1PERSON = 228  # 1인 가구 기준 중위소득 (만원/월)
-NEAR_POOR_THRESHOLD   = 115  # 차상위계층 근사치 (중위소득 50%)
+# 소득 기준 상수 (보건복지부 고시 2024~2025년 기준, 만원/월)
+MEDIAN_INCOME_1PERSON = 244  # 1인 가구 중위소득
+NEAR_POOR_THRESHOLD   = 122  # 차상위 (중위 50%)
+URBAN_WORKER_AVG      = 350  # 도시근로자 월평균 소득 (3인 가구 기준 근사)
+
+# ── 챗봇 소득 구간 → 만원 단위 추정값 (자격 검증용) ──────
+# "모름" 또는 None이면 자격 미정 (needs_check 처리)
+INCOME_BAND_TO_MANWON: Dict[str, Optional[float]] = {
+    "200만원 이하":  250,   # 사양: 구간 중앙값 사용
+    "200~300만원":  250,
+    "300~400만원":  350,
+    "400~500만원":  450,
+    "500만원 이상":  600,
+    "모름":          None,
+}
 
 # 추정 산식 상수 — 학술/공공 표준 없음, 동네 간 상대 비교용
 ASSUMED_RESIDENCE_MONTHS    = 12    # 거주기간 가정 (12개월)
@@ -185,42 +201,108 @@ def collect_youth_info() -> Dict[str, str]:
 
 
 # ──────────────────────────────────────────────────────────
-# API 호출
+# CSV 화이트리스트 로더 (v6.0)
 # ──────────────────────────────────────────────────────────
+def _normalize_csv_row(row: dict) -> dict:
+    """CSV 1행을 표준 정책 dict로 변환.
+    CSV 네이티브 필드 + 구 API 필드명 호환 shim 동시 제공.
+    """
+    zip_codes_raw = (row.get("zip_codes") or "").strip()
+    zip_codes = [z.strip() for z in zip_codes_raw.split(",") if z.strip()]
+    duplicate_with = [d.strip() for d in (row.get("duplicate_with") or "").split(",") if d.strip()]
+
+    def _to_float(v, default=0.0):
+        try:
+            return float(v) if v not in (None, "", "None") else default
+        except (ValueError, TypeError):
+            return default
+
+    def _to_int(v, default=0):
+        try:
+            return int(float(v)) if v not in (None, "", "None") else default
+        except (ValueError, TypeError):
+            return default
+
+    amt     = _to_float(row.get("benefit_amount_manwon"), 0.0)
+    period  = _to_int(row.get("benefit_period_months"), 0)
+    age_min = _to_int(row.get("target_age_min"), 0)
+    age_max = _to_int(row.get("target_age_max"), 99)
+
+    target_emp = (row.get("target_employment") or "전체").strip()
+    target_edu = (row.get("target_education")  or "전체").strip()
+    target_inc = (row.get("target_income")     or "전체").strip()
+    target_mrg = (row.get("target_marriage")   or "전체").strip()
+    target_no_house = (row.get("target_no_house") or "전체").strip()
+
+    return {
+        # ── CSV 네이티브 필드 ─────────────────────────────
+        "policy_id":              row.get("policy_id", ""),
+        "policy_name":            row.get("policy_name", ""),
+        "source_org":             row.get("source_org", ""),
+        "zip_codes":              zip_codes,
+        "support_type":           row.get("support_type", ""),
+        "benefit_amount_manwon":  amt,
+        "benefit_period_months":  period,
+        "benefit_desc":           row.get("benefit_desc", ""),
+        "target_age_min":         age_min,
+        "target_age_max":         age_max,
+        "target_employment":      target_emp,
+        "target_education":       target_edu,
+        "target_income":          target_inc,
+        "target_marriage":        target_mrg,
+        "target_no_house":        target_no_house,
+        "extra_conditions":       row.get("extra_conditions", ""),
+        "duplicate_limit":        row.get("duplicate_limit", "none"),
+        "duplicate_with":         duplicate_with,
+        "apply_url":              row.get("apply_url", ""),
+        "data_source":            row.get("data_source", ""),
+        "last_updated":           row.get("last_updated", ""),
+
+        # ── 구 온통청년 API 필드명 호환 shim ──────────────
+        "plcyNm":           row.get("policy_name", ""),
+        "plcyExplnCn":      row.get("benefit_desc", ""),
+        "plcySprtCn":       row.get("benefit_desc", ""),
+        "zipCd":            zip_codes_raw,
+        "sprtTrgtMinAge":   str(age_min) if age_min else "",
+        "sprtTrgtMaxAge":   str(age_max) if age_max else "",
+        "sprvsnInstCdNm":   row.get("source_org", ""),
+        "rgtrHghrkInstCdNm":row.get("source_org", ""),
+        "lclsfNm":          "주거",
+        "mclsfNm":          row.get("support_type", ""),
+        "refUrlAddr1":      row.get("apply_url", ""),
+        "addAplyQlfcCndCn": row.get("extra_conditions", ""),
+        "ptcpPrpTrgtCn":    "",
+        "etcMttrCn":        "",
+        "plcyKywdNm":       row.get("support_type", ""),
+        "earnCndSeCd":      "0043001" if target_inc == "전체" else "",
+        "earnMaxAmt":       "0",
+        "mrgSttsCd":        "0055003" if target_mrg == "전체" else "",
+        "schoolCd":         "0049005" if target_edu == "전체" else "",
+        "jobCd":            "",
+    }
+
+
+def _load_policies_from_csv() -> List[dict]:
+    """webapp/data/seoul_youth_housing_policies.csv 로드 → 표준 정책 dict 리스트."""
+    if not os.path.exists(CSV_PATH):
+        print(f"  [정책 CSV 없음] {CSV_PATH}")
+        return []
+    policies = []
+    with open(CSV_PATH, encoding="utf-8-sig", newline="") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            policies.append(_normalize_csv_row(row))
+    return policies
+
+
 def _call_youth_api(params: dict) -> List[dict]:
-    """온통청년 신규 API 호출 → 정책 리스트 반환."""
-    try:
-        resp = requests.get(YOUTH_API_URL, params=params, timeout=REQUEST_TIMEOUT)
-        if resp.status_code != 200:
-            print(f"  [온통청년 API 오류] HTTP {resp.status_code}")
-            return []
-        data = resp.json()
-        if data.get("resultCode") != 200:
-            print(f"  [온통청년 API] 코드 {data.get('resultCode')}: {data.get('resultMessage','')}")
-            return []
-        return data.get("result", {}).get("youthPolicyList", [])
-    except requests.exceptions.Timeout:
-        print("  [온통청년 API] 요청 시간 초과")
-        return []
-    except Exception as e:
-        print(f"  [온통청년 API 예외] {str(e)[:100]}")
-        return []
+    """[deprecated] 온통청년 API 호출. v6.0부터 CSV 사용 — 호출 시 빈 리스트."""
+    return []
 
 
-def _fetch_all_policies(max_pages=5, page_size=50) -> List[dict]:
-    """여러 페이지 조회해서 전체 정책 목록 수집."""
-    all_p = []
-    for page in range(1, max_pages + 1):
-        params = {"apiKeyNm": YOUTH_API_KEY, "pageNum": page,
-                  "pageSize": page_size, "rtnType": "json"}
-        policies = _call_youth_api(params)
-        if not policies:
-            break
-        all_p.extend(policies)
-        if len(policies) < page_size:
-            break
-        time.sleep(SLEEP_BETWEEN)
-    return all_p
+def _fetch_all_policies(max_pages: int = None, page_size: int = None) -> List[dict]:
+    """[v6.0] CSV 화이트리스트 로드. max_pages/page_size 파라미터는 호환용 무시."""
+    return _load_policies_from_csv()
 
 
 # ──────────────────────────────────────────────────────────
@@ -233,151 +315,148 @@ def _extract_policy_text(p: dict) -> str:
 
 
 def _is_seoul_policy(p: dict, gu_name: str = "") -> bool:
-    zip_cd = str(p.get("zipCd", "")).strip()
-    spr = str(p.get("sprvsnInstCdNm", ""))
-    rgtr = str(p.get("rgtrHghrkInstCdNm", ""))
-    if not zip_cd:
+    """매물 자치구의 zip 코드가 정책 zip_codes에 포함되는지 검증.
+    gu_name이 비면 zip_codes에 서울(11로 시작) 코드가 있으면 통과.
+    """
+    zip_codes = p.get("zip_codes")
+    if not zip_codes:
+        # 구 API 호환 폴백
+        zip_codes = [z.strip() for z in str(p.get("zipCd", "")).split(",") if z.strip()]
+    if not zip_codes:
+        # 빈 zip_codes는 전국 정책으로 간주 → 통과
         return True
-    codes = [z.strip() for z in zip_cd.split(",")]
     if gu_name:
         gc = SEOUL_GU_ZIPCD.get(gu_name, "")
-        if gc and any(c.startswith(gc) for c in codes):
+        if gc and any(c.startswith(gc) for c in zip_codes):
             return True
-    if any(c.startswith(SEOUL_PREFIX) for c in codes):
-        return True
-    if "서울" in spr or "서울" in rgtr:
-        return True
-    return False
+        return False
+    return any(c.startswith(SEOUL_PREFIX) for c in zip_codes)
 
 
 def _is_housing_related(p: dict) -> bool:
-    text = _extract_policy_text(p)
-    if "주거" in str(p.get("lclsfNm", "")) or "주거" in str(p.get("mclsfNm", "")):
-        return True
-    return any(kw in text for kw in HOUSING_DIRECT_KEYWORDS)
+    """v6.0: CSV 화이트리스트는 모두 주거 정책 → 항상 True."""
+    return True
 
 
 def _check_age(p: dict, user_age: str) -> bool:
+    """target_age_min ≤ user_age ≤ target_age_max."""
     if not user_age:
         return True
     try:
         age = int(user_age)
-    except ValueError:
+    except (ValueError, TypeError):
         return True
-    min_a = str(p.get("sprtTrgtMinAge", "")).strip()
-    max_a = str(p.get("sprtTrgtMaxAge", "")).strip()
-    if not min_a and not max_a:
-        return True
-    try:
-        lo = int(min_a) if min_a else 0
-        hi = int(max_a) if max_a else 999
-        return lo <= age <= hi
-    except ValueError:
-        return True
+    age_min = int(p.get("target_age_min", 0) or 0)
+    age_max = int(p.get("target_age_max", 99) or 99)
+    return age_min <= age <= age_max
 
 
 def _syn_match(syn: str, text: str) -> bool:
-    """한국어 텍스트에서 시노님을 음절 경계로 매칭.
-    앞이 한글 음절([가-힣])이면 부분 단어로 간주하여 불매칭.
-    뒤는 한국어 조사(이/가/을/를/은/는/도/만/등 등) 허용을 위해 검사하지 않음.
-    예) '취업자' in '미취업자' → False  (앞이 '미'로 한글 음절)
-        '재직자' in '재직자만'  → True   (뒤 '만'은 조사)
-        '취업자' in '취업자 대상' → True
-    """
+    """한국어 음절 경계 매칭 (구 API 텍스트 호환용, 거의 사용 안 함)."""
     pattern = f"(?<![가-힣]){re.escape(syn)}"
     return bool(re.search(pattern, text))
 
 
 def _check_employment(p: dict, user_emp: str) -> bool:
+    """target_employment: 전체 / 취업자 / 미취업자 / 자영업자 등."""
     if not user_emp:
         return True
-    text = _extract_policy_text(p)
-
-    # "전체"/"제한없음"이면 무조건 통과
-    if "전체" in text or "제한없음" in text:
+    target = str(p.get("target_employment", "전체")).strip()
+    if target in ("", "전체", "제한없음"):
         return True
-
-    # jobCd 자체가 비어있으면 통과 (취업상태 무관 정책으로 간주)
-    job_cd = str(p.get("jobCd", "")).strip()
-    if not job_cd:
-        return True
-
-    # 사용자 그룹 시노님이 텍스트에 있으면 통과
+    # 사용자 시노님 중 하나라도 target 텍스트에 포함되면 통과
     synonyms = EMPLOYMENT_SYNONYMS.get(user_emp, [user_emp])
-    for syn in synonyms:
-        if _syn_match(syn, text):
-            return True
-
-    # 폴백: 다른 취업상태 그룹의 명시 표현이 텍스트에 있으면 거부 (배타적 자격)
-    # 없으면 일반 청년정책으로 간주하고 통과 (false negative 방지)
-    other_groups = [k for k in EMPLOYMENT_SYNONYMS if k != user_emp]
-    for other in other_groups:
-        for syn in EMPLOYMENT_SYNONYMS[other]:
-            if _syn_match(syn, text):
-                return False
-    return True
-
-
-def _check_income(p: dict, user_income_manwon: str) -> bool:
-    if not user_income_manwon:
-        return True
-    try:
-        user_inc = float(user_income_manwon)
-    except ValueError:
-        return True
-    # earnMaxAmt 우선 적용 (정책 공고문의 구체적 상한액)
-    earn_max = str(p.get("earnMaxAmt", "0")).strip()
-    if earn_max and earn_max not in ("0", "", "None"):
-        try:
-            return user_inc <= float(earn_max)
-        except ValueError:
-            pass
-    # earnCndSeCd 코드로 판단
-    earn_cd = str(p.get("earnCndSeCd", "")).strip()
-    if earn_cd == "0043001":   # 제한없음
-        return True
-    if earn_cd == "0043002":   # 중위소득 이하
-        return user_inc <= MEDIAN_INCOME_1PERSON
-    if earn_cd == "0043003":   # 기초수급/차상위
-        return user_inc <= NEAR_POOR_THRESHOLD
-    return True
-
-
-def _check_marriage(p: dict, user_marriage: str) -> bool:
-    if not user_marriage:
-        return True
-    mrg_cd = str(p.get("mrgSttsCd", "")).strip()
-    if not mrg_cd or mrg_cd == "0055003":   # 제한없음
-        return True
-    policy_mrg = MARRIAGE_CODE.get(mrg_cd, "")
-    return not policy_mrg or policy_mrg == user_marriage
+    return any(syn in target for syn in synonyms)
 
 
 _EDU_ORDER = {"고졸이하": 1, "대학재학": 2, "대졸": 3, "석박사": 4}
 
 
 def _check_education(p: dict, user_edu: str) -> bool:
+    """target_education: 전체 / 고졸이하 / 대학재학 / 대졸 / 석박사."""
     if not user_edu:
         return True
-    school_cd = str(p.get("schoolCd", "")).strip()
-    if not school_cd or school_cd == "0049005":   # 제한없음
+    target = str(p.get("target_education", "전체")).strip()
+    if target in ("", "전체", "제한없음"):
         return True
-    policy_edu = SCHOOL_CODE.get(school_cd, "")
-    if not policy_edu:
-        return True
-    # "대학재학" 조건은 재학 중인 사람만 해당 (대졸자 불가)
-    if policy_edu == "대학재학":
+    if target == "대학재학":
         return user_edu == "대학재학"
     # 그 외는 "해당 학력 이상" 조건으로 해석
-    return _EDU_ORDER.get(user_edu, 0) >= _EDU_ORDER.get(policy_edu, 0)
+    return _EDU_ORDER.get(user_edu, 0) >= _EDU_ORDER.get(target, 0)
+
+
+def _parse_income_threshold(text: str) -> Optional[float]:
+    """target_income 텍스트에서 월 만원 단위 한계값 추출. 못 찾으면 None.
+
+    지원 패턴:
+      "중위 N% 이하"             → MEDIAN_INCOME_1PERSON × N%
+      "도시근로자 ... N% 이하"    → URBAN_WORKER_AVG × N%
+      "연 N만원 이하" / "N만원 이하" → 그대로 (이미 월소득)
+      "N천만원" (연소득)         → N × 1000 / 12 (월 환산)
+      "부부합산 N천만원"          → 위와 동일 (연소득)
+    """
+    # 중위 N%
+    m = re.search(r"중위\s*(\d+)\s*%", text)
+    if m:
+        return MEDIAN_INCOME_1PERSON * float(m.group(1)) / 100
+    # 도시근로자 N%
+    m = re.search(r"도시근로자.*?(\d+)\s*%", text)
+    if m:
+        return URBAN_WORKER_AVG * float(m.group(1)) / 100
+    # N천만원 (연소득) — 가장 큰 숫자 우선 (예: 신혼 7.5천 / 일반 5천 → 6.0 = 평균? 아니면 가장 관대?)
+    # 사양: 가장 관대(큰 값)을 사용
+    m_all = re.findall(r"(\d+(?:\.\d+)?)\s*천", text)
+    if m_all:
+        try:
+            biggest = max(float(x) for x in m_all)
+            return biggest * 1000 / 12
+        except ValueError:
+            pass
+    # N만원 이하 (월소득 직접 명시)
+    m = re.search(r"(\d+)\s*만원\s*이하", text)
+    if m:
+        return float(m.group(1))
+    return None
+
+
+def _check_income(p: dict, user_income_band: str) -> bool:
+    """CSV target_income 텍스트와 사용자 소득 구간 비교.
+    모호한 정책 텍스트나 사용자 모름 → True 반환 (needs_check로 처리됨).
+    """
+    target = str(p.get("target_income", "전체")).strip()
+    if target in ("", "전체", "제한없음"):
+        return True
+    user_inc = INCOME_BAND_TO_MANWON.get(user_income_band)
+    if user_inc is None:
+        return True   # "모름" 등 → 미정 (needs_check)
+    threshold = _parse_income_threshold(target)
+    if threshold is None:
+        return True   # 모호한 정책 텍스트 → 미정 (needs_check)
+    return user_inc <= threshold
+
+
+def _check_marriage(p: dict, user_marriage: str) -> bool:
+    """target_marriage: 전체 / 미혼 / 기혼 / 신혼."""
+    target = str(p.get("target_marriage", "전체")).strip()
+    if target in ("", "전체", "제한없음"):
+        return True
+    if not user_marriage:
+        return True
+    return target == user_marriage
 
 
 def _check_no_house(p: dict, no_house: str) -> bool:
-    if no_house != "n":   # 무주택 여부 모름이거나 무주택이면 통과
+    """target_no_house: 전체 / 필수 / 임차가구만.
+    no_house: "y"=무주택 / "n"=보유 / ""=모름.
+    """
+    target = str(p.get("target_no_house", "전체")).strip()
+    if target in ("", "전체"):
         return True
-    # 주택 소유자인 경우: 정책 텍스트에 "무주택" 요건이 있으면 제외
-    text = _extract_policy_text(p)
-    return "무주택" not in text
+    if no_house == "":
+        return True   # 모름 → 미정 (needs_check)
+    if target in ("필수", "임차가구만"):
+        return no_house == "y"
+    return True
 
 
 def conversion_rate_lookup(gu_name: str = "") -> float:
@@ -563,60 +642,22 @@ def fetch_candidates_basic(
 
 
 # ──────────────────────────────────────────────────────────
-# 혜택 분석
+# 혜택 분석 (v6.0 — CSV 명시 필드 직접 사용)
 # ──────────────────────────────────────────────────────────
 def analyze_benefit(p: dict, gu_name: str = "") -> dict:
-    text = _extract_policy_text(p)
-    is_housing = _is_housing_related(p)
-    best_saving, best_type, best_desc = 0.0, "", ""
-    conv_rate = conversion_rate_lookup(gu_name) / 100  # 연% → 소수
+    """CSV 화이트리스트의 명시 필드를 그대로 사용 (정규식 폴백 제거).
 
-    for pattern, btype, default, tmpl in BENEFIT_PATTERNS:
-        m = re.search(pattern, text)
-        if not m:
-            continue
-        if m.lastindex and m.lastindex >= 1:
-            try:
-                amt = float(m.group(1))
-            except (ValueError, IndexError):
-                amt = 0
-            if btype == "월세보조":
-                # 근거: 정책 공고문 명시 금액 (신뢰도 ★★★)
-                sv, ds = amt, tmpl.format(amount=f"{amt:.0f}")
-            elif btype == "보증금지원":
-                # 근거: 주택임대차보호법 제7조의2 법정 전환율 (신뢰도 ★★☆)
-                sv = round(amt * conv_rate / 12, 1) if amt > 0 else 0
-                ds = tmpl.format(amount=f"{amt:.0f}") + f" (월 환산 약 {sv:.0f}만원, 전환율 {conv_rate*100:.1f}%)"
-            elif btype == "최대지원":
-                # 추정: ASSUMED_RESIDENCE_MONTHS 균등 분할 + ASSUMED_MAX_BENEFIT_RATIO 수혜율
-                sv = round(amt * ASSUMED_MAX_BENEFIT_RATIO / ASSUMED_RESIDENCE_MONTHS, 1) if amt > 0 else 0
-                ds = tmpl.format(amount=f"{amt:.0f}") + f" (월 환산 약 {sv:.0f}만원 절감 추정)"
-            elif btype == "시세할인":
-                # 추정: MARKET_RENT_REFERENCE_MANWON 기준 (신뢰도 ★★☆)
-                sv = round((100 - amt) / 100 * MARKET_RENT_REFERENCE_MANWON, 1) if amt < 100 else 0
-                ds = tmpl.format(amount=f"{amt:.0f}") + f" (월 약 {sv:.0f}만원 절감 추정)"
-            elif btype == "임대료할인":
-                sv = round(amt / 100 * MARKET_RENT_REFERENCE_MANWON, 1)
-                ds = tmpl.format(amount=f"{amt:.0f}") + f" (월 약 {sv:.0f}만원 절감 추정)"
-            else:
-                sv = default or 0
-                ds = tmpl.format(amount=f"{amt:.0f}")
-        else:
-            sv = default or 0
-            ds = tmpl
-        if sv > best_saving:
-            best_saving, best_type, best_desc = sv, btype, ds
-
-    if is_housing and best_saving == 0:
-        best_saving, best_type = 2.0, "주거관련"
-        best_desc = "주거 관련 정책 (구체적 절감액 미확인, 원문 확인 필요)"
-
+    benefit_amount_manwon: CSV 명시 절감액 (만원/월). 0이면 표시용 정책.
+    support_type:          월세지원/전세대출/공공임대/이자지원/보증/감면 등
+    benefit_desc:          CSV 명시 설명문
+    """
+    saving = float(p.get("benefit_amount_manwon", 0) or 0)
     return {
-        "is_housing": is_housing,
-        "benefit_type": best_type,
-        "monthly_saving": best_saving,
-        "benefit_desc": best_desc,
-        "saving_pct": round(best_saving / MARKET_RENT_REFERENCE_MANWON * 100, 1) if best_saving > 0 else 0.0,
+        "is_housing":     True,            # CSV는 모두 주거 정책
+        "benefit_type":   p.get("support_type", ""),
+        "monthly_saving": saving,
+        "benefit_desc":   p.get("benefit_desc", ""),
+        "saving_pct":     round(saving / MARKET_RENT_REFERENCE_MANWON * 100, 1) if saving > 0 else 0.0,
     }
 
 
@@ -961,6 +1002,155 @@ MOCK_POLICIES: List[dict] = [
 ]
 
 
+# ──────────────────────────────────────────────────────────
+# 매물별 정책 매칭 (v6.0 — 점수 산출 X, 표시용)
+# ──────────────────────────────────────────────────────────
+
+# ── 임대유형 → 통과 가능한 support_type 화이트리스트 ────
+_RENT_TYPE_SUPPORT_FILTER: Dict[str, List[str]] = {
+    "월세": ["월세지원", "월세대출", "보증", "보증료", "감면",
+            "이자지원", "공공임대", "대출"],
+    "전세": ["전세대출", "보증", "보증료", "감면",
+            "이자지원", "공공임대", "대출"],
+}
+
+
+def _build_policy_tags(p: dict) -> List[str]:
+    """정책 자격 조건을 사람이 읽을 수 있는 짧은 태그로 변환 (상위 2~3개)."""
+    tags = []
+    age_min = p.get("target_age_min", 0)
+    age_max = p.get("target_age_max", 99)
+    if age_min and age_max and age_max < 99:
+        tags.append(f"만 {age_min}~{age_max}세")
+    elif age_min:
+        tags.append(f"만 {age_min}세 이상")
+    inc = (p.get("target_income") or "").strip()
+    if inc and inc not in ("", "전체", "제한없음"):
+        if len(inc) > 18:
+            inc = inc[:18] + "…"
+        tags.append(inc)
+    nh = (p.get("target_no_house") or "").strip()
+    if nh in ("필수", "임차가구만"):
+        tags.append("무주택 필수" if nh == "필수" else "임차가구")
+    emp = (p.get("target_employment") or "").strip()
+    if emp and emp not in ("", "전체", "제한없음"):
+        tags.append(emp)
+    return tags[:3]
+
+
+def _evaluate_policy_eligibility(p: dict, user_info: Dict[str, str]) -> str:
+    """정책 자격을 평가해 'eligible' / 'needs_check' / 'ineligible' 반환.
+
+    - eligible:    모든 자격 명확히 충족
+    - needs_check: 자격 미정(사용자 모름 또는 정책 텍스트 모호)
+    - ineligible:  명확한 미달 (나이/취업/학력 또는 명시 소득/무주택 미달)
+    """
+    age = user_info.get("age", "")
+    emp = user_info.get("employment", "")
+    edu = user_info.get("education", "")
+    income_band = user_info.get("income_band", "")
+    no_house    = user_info.get("no_house", "")
+
+    # 명확 미달 — 나이/취업/학력
+    if not _check_age(p, age):           return "ineligible"
+    if not _check_employment(p, emp):    return "ineligible"
+    if not _check_education(p, edu):     return "ineligible"
+
+    # 소득/무주택 — 자격 미정 가능
+    target_inc = (p.get("target_income") or "").strip()
+    target_nh  = (p.get("target_no_house") or "").strip()
+    income_uncertain  = (
+        target_inc not in ("", "전체", "제한없음")
+        and (INCOME_BAND_TO_MANWON.get(income_band) is None
+             or _parse_income_threshold(target_inc) is None)
+    )
+    no_house_uncertain = (
+        target_nh in ("필수", "임차가구만") and no_house == ""
+    )
+    if not _check_income(p, income_band):       return "ineligible"
+    if not _check_no_house(p, no_house):        return "ineligible"
+
+    if income_uncertain or no_house_uncertain:
+        return "needs_check"
+    return "eligible"
+
+
+def match_policies_for_property(
+    gu_name: str,
+    rent_type: str,                        # "월세" / "전세"
+    user_info: Dict[str, str],
+    top_n: int = 5,
+) -> Tuple[List[dict], int]:
+    """매물(자치구+임대유형)에 적용 가능한 정책 매칭.
+
+    필터:
+      1. 자치구 zip_codes 매칭
+      2. 회원정보(나이/취업/학력) — 미달이면 제외
+      3. 임대유형 — support_type 화이트리스트
+      4. 자격 평가 — eligible / needs_check / ineligible (ineligible은 제외)
+
+    정렬:
+      1차: eligible 우선 (eligible > needs_check)
+      2차: 자치구 한정(is_gu_specific=True) 우선
+      3차: benefit_amount_manwon 내림차순
+
+    Returns: (상위 top_n 정책 리스트, 전체 매칭 건수)
+    """
+    global _POLICY_CACHE
+    if not _POLICY_CACHE:
+        _POLICY_CACHE = _load_policies_from_csv()
+    if not _POLICY_CACHE:
+        return [], 0
+
+    rent_filter = _RENT_TYPE_SUPPORT_FILTER.get(rent_type, [])
+
+    matched = []
+    for p in _POLICY_CACHE:
+        # 1. 자치구
+        if not _is_seoul_policy(p, gu_name):
+            continue
+        # 2. 회원정보 — 명확 미달 제외 (소득/무주택은 후속 단계)
+        if not _check_age(p, user_info.get("age", "")):              continue
+        if not _check_employment(p, user_info.get("employment", "")):continue
+        if not _check_education(p, user_info.get("education", "")):  continue
+        # 3. 임대유형
+        st = p.get("support_type", "")
+        if rent_filter and st not in rent_filter:
+            continue
+        # 4. 자격 평가
+        status = _evaluate_policy_eligibility(p, user_info)
+        if status == "ineligible":
+            continue
+
+        # 자치구 한정 정책 표시 (zip_codes 5개 이하)
+        is_gu_specific = len(p.get("zip_codes", [])) <= 5
+
+        matched.append({
+            "policy_id":             p.get("policy_id", ""),
+            "policy_name":           p.get("policy_name", ""),
+            "support_type":          st,
+            "benefit_desc":          p.get("benefit_desc", ""),
+            "benefit_amount_manwon": float(p.get("benefit_amount_manwon", 0) or 0),
+            "benefit_period_months": int(p.get("benefit_period_months", 0) or 0),
+            "eligibility_status":    status,
+            "extra_conditions":      p.get("extra_conditions", ""),
+            "tags":                  _build_policy_tags(p),
+            "apply_url":             p.get("apply_url", ""),
+            "is_gu_specific":        is_gu_specific,
+            "source_org":            p.get("source_org", ""),
+        })
+
+    # 정렬: eligible 우선 → 자치구 한정 우선 → 절감액 큰 순
+    def _sort_key(item):
+        status_rank = 0 if item["eligibility_status"] == "eligible" else 1
+        gu_rank     = 0 if item["is_gu_specific"] else 1
+        return (status_rank, gu_rank, -item["benefit_amount_manwon"])
+    matched.sort(key=_sort_key)
+
+    total_count = len(matched)
+    return matched[:top_n], total_count
+
+
 def fetch_policies_for_gu(gu_name: str,
                            user_info: Dict[str, str],
                            max_display: int = 3,
@@ -1079,5 +1269,5 @@ def print_policy_section(gu_name: str, score: float,
 
 
 def is_youth_api_configured() -> bool:
-    """API 키가 설정되었는지 확인"""
-    return bool(YOUTH_API_KEY) and not YOUTH_API_KEY.startswith("YOUR_")
+    """[v6.0] CSV 화이트리스트 파일 존재 여부 (구 버전: API 키 검사)."""
+    return os.path.exists(CSV_PATH)

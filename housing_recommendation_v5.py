@@ -15,6 +15,7 @@ from youth_policy_module import (
     is_youth_api_configured, collect_youth_info,
     fetch_policies_for_gu, print_policy_section,
     reset_policy_cache,
+    match_policies_for_property,   # v6.0 — 매물별 정책 매칭 (점수 X)
 )
 from feedback_module import collect_feedback, print_feedback_summary, get_feedback_count
 from vibe_module import get_vibe_weights, apply_vibe_to_infra_scores
@@ -1087,11 +1088,16 @@ def calc_infra_score(x, y, required_infra, kakao_key, vibe_weights=None):
 
 
 def topsis_score(df, weight_commute, weight_housing, weight_infra=0.0, weight_policy=0.0):
-    """Fuzzy TOPSIS: 최선/최악 대비 거리로 점수 산출. 4축(통근/주거비/인프라/정책) 지원."""
+    """Fuzzy TOPSIS (v6.0 — 3축: 통근/주거비/인프라).
+
+    weight_policy 파라미터는 호환용으로 유지하지만 무시됩니다.
+    청년정책은 매물별 표시용으로만 매칭되고 추천 점수에 반영하지 않습니다.
+    """
     import numpy as np
     c  = df["commute_score"].fillna(0)
     h  = df["housing_score"].fillna(0)
-    wc, wh, wi, wp = weight_commute, weight_housing, weight_infra, weight_policy
+    wc, wh, wi = weight_commute, weight_housing, weight_infra
+    # weight_policy는 v6.0부터 무시 — 정책은 추천 점수에 반영 X
 
     # 축 목록 구성 (가중치 > 0인 축만 포함)
     axes = [(c, wc)]   # 통근
@@ -1099,9 +1105,6 @@ def topsis_score(df, weight_commute, weight_housing, weight_infra=0.0, weight_po
 
     if wi > 0 and "infra_score" in df.columns:
         axes.append((df["infra_score"].fillna(0), wi))
-
-    if wp > 0 and "policy_score" in df.columns:
-        axes.append((df["policy_score"].fillna(0), wp))
 
     # TOPSIS 계산 (N축 일반화)
     d_best_sq  = None
@@ -1636,49 +1639,43 @@ def run_recommendation(housing_csv_path, work_address, transport_mode,
             lambda x: round(commute_score(x, allowed_commute_min), 2)
         )
 
-        # ── 청년정책 점수 조회 (TOPSIS 이전에 실행) ──────
-        if selected_policies:
-            # 챗봇 카드 플로우: 사용자가 선택한 정책 그대로 사용 (자격 재확인 X)
-            print(f"\n[청년정책] 사용자 선택 정책 {len(selected_policies)}건 적용")
-            total_saving = sum(p.get("_monthly_saving", 0) for p in selected_policies[:max_policy_display])
-            ref_budget   = max(monthly_rent_manwon, 1.0)
-            uniform_score = min(100.0, round(total_saving / ref_budget * 100, 2))
-            s3_ok["policy_score"]   = uniform_score
-            s3_ok["policy_matched"] = [list(selected_policies) for _ in range(len(s3_ok))]
-            print(f"  → 정책 점수: {uniform_score:.0f}점 (월 절감 추정 {total_saving:.0f}만원)")
-        elif user_info and is_youth_api_configured():
-            print(f"\n[청년정책] 매물 지역별 청년정책 조회 중...")
-            policy_cache = {}
-            policy_scores = []
-            policy_matched_list = []
-
+        # ── 청년정책 매물별 매칭 (v6.0 — 점수 X, 표시용만) ──────
+        rent_type_label = "월세" if monthly_rent_manwon > 0 else "전세"
+        if user_info and is_youth_api_configured():
+            print(f"\n[청년정책] 매물별 정책 매칭 중... (rent_type={rent_type_label})")
+            match_cache: dict = {}
+            applicable_lists: list = []
+            applicable_totals: list = []
             for _, row in s3_ok.iterrows():
                 gu = str(row.get("시군구_2", "")).strip()
-                if not gu:
-                    policy_scores.append(0.0)
-                    policy_matched_list.append([])
-                    continue
-                if gu not in policy_cache:
+                key = (gu, rent_type_label)
+                if key not in match_cache:
                     try:
-                        ps, pm = fetch_policies_for_gu(gu, user_info, max_policy_display, monthly_rent_manwon, auto_confirm=chatbot_mode)
-                        policy_cache[gu] = (ps, pm)
+                        pol_list, pol_total = match_policies_for_property(
+                            gu, rent_type_label, user_info, top_n=5
+                        )
+                        match_cache[key] = (pol_list, pol_total)
                     except Exception as e:
-                        print(f"  [청년정책 오류] {gu}: {str(e)[:80]}")
-                        policy_cache[gu] = (0.0, [])
-                ps, pm = policy_cache[gu]
-                policy_scores.append(ps)
-                policy_matched_list.append(pm)
-
-            s3_ok["policy_score"]   = policy_scores
-            s3_ok["policy_matched"] = policy_matched_list
-            print(f"  → 청년정책 조회 완료 ({len(policy_cache)}개 구)")
+                        print(f"  [정책 매칭 오류] {gu}: {str(e)[:80]}")
+                        match_cache[key] = ([], 0)
+                pol_list, pol_total = match_cache[key]
+                applicable_lists.append(pol_list)
+                applicable_totals.append(pol_total)
+            s3_ok["applicable_policies"]       = applicable_lists
+            s3_ok["applicable_policies_total"] = applicable_totals
+            # 호환용 (구 코드가 참조할 수 있음, 정책 점수는 v6.0부터 항상 0)
+            s3_ok["policy_score"]   = 0.0
+            s3_ok["policy_matched"] = applicable_lists
+            print(f"  → 매칭 완료 ({len(match_cache)}개 (구,임대유형) 조합)")
         else:
+            s3_ok["applicable_policies"]       = [[] for _ in range(len(s3_ok))]
+            s3_ok["applicable_policies_total"] = [0 for _ in range(len(s3_ok))]
             s3_ok["policy_score"]   = 0.0
             s3_ok["policy_matched"] = [[] for _ in range(len(s3_ok))]
 
-        # TOPSIS 점수 적용 (4축: 통근+주거비+인프라+정책)
+        # TOPSIS 점수 적용 (v6.0: 3축 — 통근/주거비/인프라; 정책은 표시용)
         s3_ok["final_score"] = topsis_score(
-            s3_ok, weight_commute, weight_housing, weight_infra, weight_policy
+            s3_ok, weight_commute, weight_housing, weight_infra, 0.0
         )
         combined = s3_ok.sort_values("final_score", ascending=False)
 

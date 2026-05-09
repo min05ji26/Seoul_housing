@@ -42,6 +42,7 @@ document.addEventListener("DOMContentLoaded", () => {
     return;
   }
   attachControlHandlers();
+  attachModalHandlers();
 
   // 챗봇에서 자동 추천한 결과가 sessionStorage에 있으면 API 재호출 없이 바로 렌더링
   const cached = sessionStorage.getItem("rec_results_cache");
@@ -214,11 +215,14 @@ function renderTopCard(r, idx) {
   if (r.rent_type)  detailParts.push(escHtml(r.rent_type));
 
   const priceLine = formatPriceLine(r);
-  const policyHtml = r.policy_matched && r.policy_matched.length
-    ? `<div class="rec-policy">💚 청년정책 ${r.policy_matched.length}건 적용 가능 — ${escHtml(r.policy_matched[0].name)}</div>`
+  const policyTotal = (r.applicable_policies_total != null
+                       ? r.applicable_policies_total
+                       : (r.applicable_policies ? r.applicable_policies.length : 0));
+  const policyHtml = policyTotal > 0
+    ? `<div class="rec-policy">💚 청년정책 ${policyTotal}건 적용 가능 — 카드를 눌러 상세 보기</div>`
     : "";
 
-  // 점수바 (4축, safety는 데이터 있으면만)
+  // 점수바 (3축, safety는 데이터 있으면만)
   const scoreRows = [
     scoreRow("통근", commute, 60, true),
     scoreRow("주거비", cost, 100, false),
@@ -226,21 +230,19 @@ function renderTopCard(r, idx) {
   ];
   if (safety != null) scoreRows.push(scoreRow("안전", safety, 100, false));
 
-  // 태그칩
+  // 태그칩 (정책 점수는 v6.0부터 사용 안 함)
   const tags = [];
-  if (r.policy_score) tags.push(`📋 청년정책 ${r.policy_score}점`);
   if (r.infra_score)  tags.push(`🏪 편의시설 ${r.infra_score}점`);
   if (commute !== "–") tags.push(`🚇 통근 ${commute}분`);
-
-  const fullPolicies = renderFullPolicies(r.policy_matched);
+  if (policyTotal > 0) tags.push(`💚 청년정책 ${policyTotal}건`);
 
   return `
-    <div class="rec-top-card">
+    <div class="rec-top-card" onclick="openPropertyModal(0)">
       <div class="rec-top-image">
         <div class="rec-rank-badge">🏆 1위 추천</div>
         <div class="rec-score-badge">⭐ ${score}</div>
         <span style="font-size:64px">🏢</span>
-        <button class="rec-heart-btn" data-id="${idx}" onclick="toggleFav(this)" aria-label="찜">🤍</button>
+        <button class="rec-heart-btn" data-id="${idx}" onclick="toggleFav(this); event.stopPropagation();" aria-label="찜">🤍</button>
       </div>
       <div class="rec-top-content">
         <div class="rec-address">📍 ${escHtml(r.address || (r.gu + " " + r.dong))}</div>
@@ -257,8 +259,6 @@ function renderTopCard(r, idx) {
         <div class="rec-tags">
           ${tags.map(t => `<span class="rec-tag">${t}</span>`).join("")}
         </div>
-
-        ${fullPolicies}
       </div>
     </div>
   `;
@@ -269,21 +269,25 @@ function renderRestCard(r, i) {
   const colorMap = ["blue", "green", "gray"];
   const color    = colorMap[i % colorMap.length];
   const rank     = i + 2;
+  const idx      = i + 1;  // _allResults 인덱스 (1위는 0)
   const score    = r.score != null ? r.score : 0;
   const priceLine = formatPriceLineCompact(r);
   const commute  = r.commute_min != null ? r.commute_min : "–";
 
-  const policyBadge = r.policy_matched && r.policy_matched.length
-    ? `<div class="rec-card-policy">💚 청년정책 ${r.policy_matched.length}건 적용 가능</div>`
+  const policyTotal = (r.applicable_policies_total != null
+                       ? r.applicable_policies_total
+                       : (r.applicable_policies ? r.applicable_policies.length : 0));
+  const policyBadge = policyTotal > 0
+    ? `<div class="rec-card-policy">💚 청년정책 ${policyTotal}건 적용 가능</div>`
     : "";
 
   return `
-    <div class="rec-card">
+    <div class="rec-card" onclick="openPropertyModal(${idx})">
       <div class="rec-card-image ${color}">
         <div class="rec-rank-badge">${rank}위</div>
         <div class="rec-score-badge">⭐ ${score}</div>
         <span>🏠</span>
-        <button class="rec-heart-btn" data-id="${i+1}" onclick="toggleFav(this)" aria-label="찜">🤍</button>
+        <button class="rec-heart-btn" data-id="${idx}" onclick="toggleFav(this); event.stopPropagation();" aria-label="찜">🤍</button>
       </div>
       <div class="rec-card-body">
         <div class="rec-card-rank">${rank}위 추천</div>
@@ -313,34 +317,228 @@ function onMoreCardClick() {
   alert("더 많은 매물 보기 기능은 준비 중이에요.\n현재 추천 결과는 상위 5개입니다.");
 }
 
-// ── 청년정책 풀 카드 (1위 카드 안) ──────────────────────
-function renderFullPolicies(policies) {
-  if (!policies || !policies.length) return "";
-  const items = policies.map(p => {
-    const savingText = p.saving > 0 ? `월 약 ${p.saving}만원 절감` : "";
-    const dupBadge   = p.dup ? `<span class="rec-policy-dup">중복제한</span>` : "";
-    const linkAttr   = p.url ? `href="${escHtml(p.url)}" target="_blank" rel="noopener"` : "";
-    const nameHtml   = p.url
-      ? `<a class="rec-policy-name" ${linkAttr}>${escHtml(p.name)} ↗</a>`
-      : `<span class="rec-policy-name">${escHtml(p.name)}</span>`;
-    return `
-      <div class="rec-policy-item">
-        <div class="rec-policy-top">${nameHtml}${dupBadge}</div>
-        ${p.benefit ? `<div class="rec-policy-desc">${escHtml(p.benefit)}</div>` : ""}
-        ${savingText ? `<div class="rec-policy-saving">💰 ${escHtml(savingText)}</div>` : ""}
-      </div>
-    `;
-  }).join("");
+// ──────────────────────────────────────────────────────────
+// v6.0 — 매물 상세 모달
+// ──────────────────────────────────────────────────────────
+
+const POLICY_ICON_MAP = {
+  "월세지원":  { icon: "💚", cls: "policy-icon-box--monthly" },
+  "월세대출":  { icon: "💚", cls: "policy-icon-box--monthly" },
+  "보증":      { icon: "🏦", cls: "policy-icon-box--deposit-loan" },
+  "보증료":    { icon: "🏦", cls: "policy-icon-box--deposit-loan" },
+  "이자지원":  { icon: "🏦", cls: "policy-icon-box--deposit-loan" },
+  "전세대출":  { icon: "🏦", cls: "policy-icon-box--deposit-loan" },
+  "공공임대":  { icon: "🏠", cls: "policy-icon-box--rental" },
+  "감면":      { icon: "🏷️", cls: "" },
+  "대출":      { icon: "💳", cls: "" },
+};
+function policyIconFor(supportType) {
+  return POLICY_ICON_MAP[supportType] || { icon: "📋", cls: "" };
+}
+
+let _modalShownCount = 5;          // 모달 안 정책 표시 개수
+let _modalCurrentRank = 0;         // 현재 보고 있는 매물 순위 (0-based)
+
+// 매물 카드 클릭 → 모달 열기
+function openPropertyModal(idx) {
+  const results = sortedResults();
+  const r = results[idx];
+  if (!r) return;
+  _modalCurrentRank = idx;
+  _modalShownCount = 5;
+  renderModalContent(r, idx);
+  const overlay = document.getElementById("property-modal-overlay");
+  overlay.style.display = "flex";
+  overlay.setAttribute("aria-hidden", "false");
+  document.body.classList.add("modal-open");
+}
+
+function closePropertyModal() {
+  const overlay = document.getElementById("property-modal-overlay");
+  overlay.style.display = "none";
+  overlay.setAttribute("aria-hidden", "true");
+  document.body.classList.remove("modal-open");
+}
+
+function renderModalContent(r, idx) {
+  // 헤더 — "1위 추천 • 중구 신당동"
+  const rank = idx + 1;
+  const dongText = r.dong || r.address || "";
+  document.getElementById("modal-title").textContent =
+    `${rank}위 추천 · ${(r.gu || "")} ${dongText}`.trim();
+
+  // 매물 요약
+  document.getElementById("modal-address").textContent = r.address || (r.gu + " " + r.dong);
+  const metaParts = [];
+  if (r.house_type) metaParts.push(r.house_type);
+  if (r.area_m2)    metaParts.push(`${r.area_m2}㎡`);
+  if (r.rent_type)  metaParts.push(r.rent_type);
+  document.getElementById("modal-meta").textContent =
+    metaParts.length ? metaParts.join(" · ") : "주택 유형 정보 없음";
+  document.getElementById("modal-deposit").textContent = formatPriceLine(r);
+
+  // 우측 태그 칩
+  const tagsEl = document.getElementById("modal-tags");
+  const score = r.score != null ? r.score : 0;
+  const policyTotal = (r.applicable_policies_total != null
+                       ? r.applicable_policies_total
+                       : (r.applicable_policies ? r.applicable_policies.length : 0));
+  const tagBits = [`<span class="tag-pill tag-pill--score">⭐ ${score}점</span>`];
+  if (r.commute_min != null) tagBits.push(`<span class="tag-pill tag-pill--commute">🚇 ${r.commute_min}분</span>`);
+  if (policyTotal > 0)       tagBits.push(`<span class="tag-pill tag-pill--policy">💚 청년정책 ${policyTotal}건</span>`);
+  tagsEl.innerHTML = tagBits.join("");
+
+  // 예상 생활비 placeholder 부제
+  document.getElementById("modal-expense-subtitle").textContent =
+    `${r.gu || ""} ${dongText} 기준 · 1인 가구`.trim();
+  const now = new Date();
+  document.getElementById("modal-expense-date").textContent =
+    `${now.getFullYear()}년 ${now.getMonth() + 1}월`;
+
+  // 청년정책 섹션
+  renderModalPolicies(r);
+}
+
+function renderModalPolicies(r) {
+  const policies = Array.isArray(r.applicable_policies) ? r.applicable_policies : [];
+  const total    = (r.applicable_policies_total != null) ? r.applicable_policies_total : policies.length;
+  const subtitleEl   = document.getElementById("modal-policy-subtitle");
+  const propNameEl   = document.getElementById("modal-policy-property-name");
+  const savingsEl    = document.getElementById("modal-policy-savings");
+  const listEl       = document.getElementById("modal-policy-list");
+  const showMoreBtn  = document.getElementById("modal-policy-show-more");
+  const emptyEl      = document.getElementById("modal-policy-empty");
+
+  // 사용자 닉네임 (있으면) — "○○님께 적용 가능한"
+  const nick = localStorage.getItem("nickname") || "고객";
+  subtitleEl.textContent = `${nick}님께 적용 가능한 정책 ${total}건`;
+  propNameEl.textContent = `${r.gu || ""} ${r.dong || ""} 기준 매물`.trim();
+
+  // 절감액 합계 (eligible 정책의 benefit_amount_manwon 합)
+  const eligibleSum = policies
+    .filter(p => p.eligibility_status === "eligible")
+    .reduce((sum, p) => sum + (Number(p.benefit_amount_manwon) || 0), 0);
+  if (eligibleSum > 0) {
+    savingsEl.textContent = `최대 ${formatBenefitAmount(eligibleSum)}`;
+    savingsEl.style.display = "";
+  } else {
+    savingsEl.style.display = "none";
+  }
+
+  // 정책 비어있으면 안내
+  if (!total || !policies.length) {
+    listEl.innerHTML = "";
+    showMoreBtn.style.display = "none";
+    emptyEl.style.display = "block";
+    return;
+  }
+  emptyEl.style.display = "none";
+
+  // 상위 N개 표시 (_modalShownCount, 기본 5)
+  const visible = policies.slice(0, _modalShownCount);
+  listEl.innerHTML = visible.map(renderPolicyItem).join("");
+
+  // "더 보기" 버튼 (전체 N건 > 표시 N건일 때만)
+  if (total > visible.length) {
+    showMoreBtn.style.display = "block";
+    showMoreBtn.textContent = `더 보기 (${total - visible.length}건 더)`;
+  } else {
+    showMoreBtn.style.display = "none";
+  }
+}
+
+function renderPolicyItem(p) {
+  const ico = policyIconFor(p.support_type);
+  const isEligible    = p.eligibility_status === "eligible";
+  const needsCheck    = p.eligibility_status === "needs_check";
+  const isGuSpecific  = !!p.is_gu_specific;
+
+  const itemClass = [
+    "policy-item",
+    needsCheck ? "policy-item--needs-check" : "",
+    isGuSpecific ? "policy-item--gu-specific" : "",
+  ].filter(Boolean).join(" ");
+
+  const iconClass = [
+    "policy-icon-box",
+    ico.cls,
+    needsCheck ? "policy-icon-box--needs-check" : "",
+  ].filter(Boolean).join(" ");
+
+  // 상태 라벨
+  const labels = [];
+  if (isEligible)   labels.push(`<span class="policy-label policy-label--eligible">신청가능</span>`);
+  if (needsCheck)   labels.push(`<span class="policy-label policy-label--needs-check">상세조건 확인 필요</span>`);
+  if (isGuSpecific) labels.push(`<span class="policy-label policy-label--gu">이 동네 한정</span>`);
+
+  // 자격 태그
+  const tagHtml = (p.tags || []).map(t => `<span class="policy-tag">${escHtml(t)}</span>`).join("");
+
+  // 신청 URL
+  const linkHtml = p.apply_url
+    ? `<a class="policy-item-link" href="${escHtml(p.apply_url)}" target="_blank" rel="noopener">자세히 보기 ↗</a>`
+    : "";
+
+  const nameClass = needsCheck ? "policy-item-name policy-item-name--disabled" : "policy-item-name";
+  const descClass = needsCheck ? "policy-item-desc policy-item-desc--disabled" : "policy-item-desc";
+
   return `
-    <div class="rec-policy-section">
-      <div class="rec-policy-header">
-        <span class="rec-policy-icon">📋</span>
-        <span>매칭된 청년정책 ${policies.length}건</span>
+    <div class="${itemClass}">
+      <div class="${iconClass}">${ico.icon}</div>
+      <div class="policy-item-body">
+        <div class="policy-item-name-row">
+          <span class="${nameClass}">${escHtml(p.policy_name)}</span>
+          ${labels.join("")}
+        </div>
+        ${p.benefit_desc ? `<div class="${descClass}">${escHtml(p.benefit_desc)}</div>` : ""}
+        ${tagHtml ? `<div class="policy-tag-list">${tagHtml}</div>` : ""}
+        ${linkHtml}
       </div>
-      <div class="rec-policy-list">${items}</div>
     </div>
   `;
 }
+
+// 만원 → "1,240만원" / "1억" 형식
+function formatBenefitAmount(manwon) {
+  const n = Math.round(manwon);
+  if (n >= 10000) {
+    const ok = Math.floor(n / 10000);
+    const rem = n % 10000;
+    return rem > 0 ? `${ok}억 ${rem.toLocaleString()}만원` : `${ok}억원`;
+  }
+  return `${n.toLocaleString()}만원`;
+}
+
+// 더 보기 버튼 클릭
+function onPolicyShowMore() {
+  _modalShownCount += 5;
+  const r = sortedResults()[_modalCurrentRank];
+  if (r) renderModalPolicies(r);
+}
+
+// 모달 닫기 핸들러 (ESC, 외부 클릭, X 버튼)
+function attachModalHandlers() {
+  const overlay = document.getElementById("property-modal-overlay");
+  const closeBtn = document.getElementById("modal-close-btn");
+  const showMoreBtn = document.getElementById("modal-policy-show-more");
+  if (closeBtn) closeBtn.addEventListener("click", closePropertyModal);
+  if (showMoreBtn) showMoreBtn.addEventListener("click", onPolicyShowMore);
+  if (overlay) {
+    // 외부(오버레이 자체) 클릭 시 닫기 (모달 내부 클릭은 무시)
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) closePropertyModal();
+    });
+  }
+  // ESC 닫기
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && overlay && overlay.style.display !== "none") {
+      closePropertyModal();
+    }
+  });
+}
+
+window.openPropertyModal = openPropertyModal;
+window.closePropertyModal = closePropertyModal;
 
 // ── 점수바 한 줄 ────────────────────────────────────────
 function scoreRow(label, value, max, asMinutes) {

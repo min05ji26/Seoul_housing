@@ -125,20 +125,19 @@ SLOT_DISPLAY = {
     "vibe":              "동네 분위기",
     "use_youth_policy":  "청년정책 반영",
     "region_filter":     "선호 지역",
-    # 청년정책 세부 슬롯
+    # 청년정책 세부 슬롯 (v6.0 — marriage 제거)
     "policy_employment": "취업상태",
-    "policy_income":     "월 소득",
-    "policy_marriage":   "혼인상태",
     "policy_education":  "학력",
+    "policy_income":     "월 소득",
     "policy_no_house":   "무주택여부",
 }
 
-# 청년정책 세부 질문 (use_youth_policy=True 후 순서대로 수집)
+# 청년정책 세부 질문 (v6.0 — use_youth_policy=True 후 순서대로 수집)
+# 회원정보(user_meta)에 employment/education이 있으면 자동 채워서 질문 생략.
 POLICY_SLOTS = [
     "policy_employment",
-    "policy_income",
-    "policy_marriage",
     "policy_education",
+    "policy_income",
     "policy_no_house",
 ]
 
@@ -149,19 +148,24 @@ POLICY_QUESTIONS = {
         "② 미취업자 (구직 중, 일 경험 없음 등)\n"
         "③ 자영업자 (사업자 등록자)"
     ),
-    "policy_income": (
-        "월 소득이 얼마인지 알려주세요.\n"
-        "(예: 200만원 / 250 / 소득 없음)\n"
-        "청년정책 자격 확인에만 사용됩니다."
-    ),
-    "policy_marriage": "혼인 상태를 선택해 주세요.\n① 미혼  ② 기혼",
     "policy_education": (
         "최종 학력을 선택해 주세요.\n"
         "① 고졸이하  ② 대학재학  ③ 대졸  ④ 석박사"
     ),
+    "policy_income": (
+        "월 소득 구간을 선택해 주세요.\n"
+        "① 200만원 이하\n"
+        "② 200~300만원\n"
+        "③ 300~400만원\n"
+        "④ 400~500만원\n"
+        "⑤ 500만원 이상\n"
+        "⑥ 모름"
+    ),
     "policy_no_house": (
-        "현재 주택을 소유하고 있나요?\n"
-        "① 무주택 (소유 없음)  ② 주택 소유"
+        "현재 주택을 소유하고 계신가요?\n"
+        "① 무주택 (소유 없음)\n"
+        "② 주택 소유\n"
+        "③ 모름"
     ),
 }
 
@@ -188,10 +192,12 @@ class ChatBot:
         # 첫 사용자 입력도 컨텍스트 폴백이 작동하도록
         self._last_asked_slot: Optional[str] = "work_address"
         self.user_meta: Dict[str, str] = {}  # 로그인 유저 정보 (birth_date, gender, age, nickname)
-        # ── 청년정책 카드 플로우 상태 ──
-        self._selection_error: Optional[str] = None   # 카드 선택 충돌 오류
-        self.policy_cards: Optional[List[Dict]] = None # /api/chat 응답용 카드 데이터
-        self.has_more_policy_cards: bool = False       # "더보기" 가능 여부
+        # ── 청년정책 자격 수집 안내 메시지 1회 표시 플래그 (v6.0) ──
+        self._policy_intro_shown: bool = False
+        # ── 카드 플로우 잔재 (v6.0 deprecated, /api/chat 응답 호환용) ──
+        self._selection_error: Optional[str] = None
+        self.policy_cards: Optional[List[Dict]] = None
+        self.has_more_policy_cards: bool = False
         # ── 슬롯 입력 순서 추적 (이전으로/수정하기 기능용) ──
         self._slot_fill_order: List[str] = []
 
@@ -257,55 +263,37 @@ class ChatBot:
             if self.slots.get("use_youth_policy") is None:
                 return "현재 조건에 맞는 청년정책도 같이 확인하시겠어요? (예 / 아니요)"
 
-        # 청년정책 카드 플로우 (use_youth_policy=True 후)
+        # 청년정책 자격 정보 수집 (v6.0 — 카드 단계 제거)
+        # 회원정보(employment/education) 자동 채우고, 부족한 슬롯만 순차 질문.
         if self.slots.get("use_youth_policy"):
-            # ── Step 1: employment/education 확보 ──────────────
-            # user_meta 우선, 없으면 슬롯에서, 그래도 없으면 챗봇이 묻기
-            emp = (self.user_meta.get("employment", "") or "").strip() \
-                  or self.slots.get("policy_employment", "")
-            edu = (self.user_meta.get("education",  "") or "").strip() \
-                  or self.slots.get("policy_education", "")
+            # user_meta(회원정보) → 슬롯 자동 채우기 (1회성)
+            if self.slots.get("policy_employment") is None:
+                emp = (self.user_meta.get("employment", "") or "").strip()
+                if emp:
+                    self.slots["policy_employment"] = emp
+            if self.slots.get("policy_education") is None:
+                edu = (self.user_meta.get("education", "") or "").strip()
+                if edu:
+                    self.slots["policy_education"] = edu
 
-            # user_meta 값 자동으로 슬롯에 채우기 (1회성)
-            if emp and not self.slots.get("policy_employment"):
-                self.slots["policy_employment"] = emp
-            if edu and not self.slots.get("policy_education"):
-                self.slots["policy_education"] = edu
+            # 청년정책 안내 메시지 (최초 1회, 첫 미답 슬롯과 함께 출력)
+            missing_policy = [s for s in POLICY_SLOTS if self.slots.get(s) is None]
+            if missing_policy and not getattr(self, "_policy_intro_shown", False):
+                self._policy_intro_shown = True
+                first = missing_policy[0]
+                self._last_asked_slot = first
+                intro = (
+                    f"정확한 정책 안내를 위해 {len(missing_policy)}가지만 더 여쭤볼게요. "
+                    "모르시면 '모름'을 선택하셔도 됩니다.\n"
+                    "(건너뛰면 일부 정책은 신청 전 추가 확인이 필요할 수 있어요.)\n\n"
+                )
+                return intro + POLICY_QUESTIONS[first]
 
-            if not emp:
-                self._last_asked_slot = "policy_employment"
-                return POLICY_QUESTIONS["policy_employment"]
-            if not edu:
-                self._last_asked_slot = "policy_education"
-                return POLICY_QUESTIONS["policy_education"]
-
-            # ── Step 2: 1차 필터링 ─────────────────────────────
-            if self.slots.get("candidate_policies") is None:
-                gu = self._extract_work_gu()
-                try:
-                    from youth_policy_module import fetch_candidates_basic
-                    candidates = fetch_candidates_basic(
-                        {"age": self.user_meta.get("age", ""),
-                         "employment": emp, "education": edu},
-                        gu,
-                    )
-                except Exception as e:
-                    print(f"[정책 필터링 오류] {e}")
-                    candidates = []
-                self.slots["candidate_policies"] = candidates
-                self.slots["show_more_offset"] = 0
-
-            # ── Step 3: 카드 표시 + 선택 대기 ─────────────────
-            if self.slots.get("selected_policies") is None:
-                self._last_asked_slot = "policy_card_selection"
-                return "__show_cards__"
-
-            # ── Step 4: 추가 조건 묻기 ─────────────────────────
-            for cond in (self.slots.get("required_conditions") or []):
-                slot_key = f"policy_{cond}"
-                if self.slots.get(slot_key) is None:
-                    self._last_asked_slot = slot_key
-                    return POLICY_QUESTIONS.get(slot_key, "")
+            # 슬롯 순서대로 질문
+            for slot in POLICY_SLOTS:
+                if self.slots.get(slot) is None:
+                    self._last_asked_slot = slot
+                    return POLICY_QUESTIONS[slot]
 
         return None  # 모든 슬롯 완료
 
@@ -493,12 +481,61 @@ class ChatBot:
             return "고졸이하"
         return None
 
+    # 소득 구간 선택지 매핑 (v6.0 — INCOME_BAND_TO_MANWON 키와 일치)
+    _INCOME_BAND_MAP = {
+        "1": "200만원 이하", "①": "200만원 이하",
+        "2": "200~300만원", "②": "200~300만원",
+        "3": "300~400만원", "③": "300~400만원",
+        "4": "400~500만원", "④": "400~500만원",
+        "5": "500만원 이상", "⑤": "500만원 이상",
+        "6": "모름",         "⑥": "모름",
+    }
+
+    @classmethod
+    def _parse_income_band_choice(cls, text: str) -> Optional[str]:
+        """소득 구간 6선택지 파싱."""
+        t = text.strip()
+        # 1) 번호 매칭
+        for k, v in cls._INCOME_BAND_MAP.items():
+            if k in t:
+                return v
+        # 2) 텍스트 직접 매칭
+        if re.search(r"모름|몰라|소득\s*없|없음", t):
+            return "모름"
+        if re.search(r"500\s*만원\s*이상|500이상|5백\s*이상", t):
+            return "500만원 이상"
+        if re.search(r"400.*500|4백.*5백", t):
+            return "400~500만원"
+        if re.search(r"300.*400|3백.*4백", t):
+            return "300~400만원"
+        if re.search(r"200.*300|2백.*3백", t):
+            return "200~300만원"
+        if re.search(r"200\s*만원\s*이하|200이하|2백\s*이하", t):
+            return "200만원 이하"
+        # 3) 만원 단위 직접 입력 → 가장 가까운 구간
+        m = re.search(r"(\d+)\s*만", t)
+        if m:
+            amt = int(m.group(1))
+            if   amt <= 200: return "200만원 이하"
+            elif amt <= 300: return "200~300만원"
+            elif amt <= 400: return "300~400만원"
+            elif amt <= 500: return "400~500만원"
+            else:            return "500만원 이상"
+        return None
+
     @staticmethod
     def _parse_no_house_choice(text: str) -> Optional[str]:
-        # ① / 1 / "무주택" → "y"   ② / 2 / "소유" → "n"
-        if re.search(r"[①1]|무주택|없어|소유\s*안|안\s*소유", text):
+        """무주택 여부 파싱.
+        ① / 1 / "무주택"   → "y"
+        ② / 2 / "소유"     → "n"
+        ③ / 3 / "모름"     → ""  (빈 문자열로 슬롯 채움 → backend에서 needs_check)
+        """
+        t = text.strip()
+        if re.search(r"[③3]|모름|몰라", t):
+            return ""
+        if re.search(r"[①1]|무주택|없어|소유\s*안|안\s*소유", t):
             return "y"
-        if re.search(r"[②2]|소유|있어|주택\s*있|집\s*있", text):
+        if re.search(r"[②2]|소유|있어|주택\s*있|집\s*있", t):
             return "n"
         return None
 
@@ -579,23 +616,14 @@ class ChatBot:
         return m.group(1) if m else ""
 
     def _compute_required_conditions(self, policies: list) -> list:
-        """선택 정책들이 요구하는 추가 조건 목록 산출 (income/marriage/no_house 순)."""
-        from youth_policy_module import _extract_policy_text
-        needs = {"income": False, "marriage": False, "no_house": False}
-        for p in policies:
-            earn_cd  = str(p.get("earnCndSeCd", "")).strip()
-            earn_max = str(p.get("earnMaxAmt",  "0")).strip()
-            mrg_cd   = str(p.get("mrgSttsCd",   "")).strip()
-            text     = _extract_policy_text(p)
-            if (earn_cd and earn_cd != "0043001") or (earn_max not in ("0", "", "None")):
-                needs["income"]   = True
-            if mrg_cd and mrg_cd not in ("", "0055003"):
-                needs["marriage"] = True
-            if "무주택" in text:
-                needs["no_house"] = True
-        return [k for k in ["income", "marriage", "no_house"] if needs[k]]
+        """[v6.0 deprecated] 카드 플로우 잔재. 항상 빈 리스트."""
+        return []
 
     def _build_card_message(self) -> str:
+        """[v6.0 deprecated] 카드 플로우 잔재."""
+        return ""
+
+    def _build_card_message_LEGACY(self) -> str:
         """카드 표시 메시지 생성 + self.policy_cards / has_more_policy_cards 세팅."""
         candidates = self.slots.get("candidate_policies", [])
         offset     = self.slots.get("show_more_offset", 0)
@@ -759,73 +787,24 @@ class ChatBot:
                 m = re.search(r"(\d+)", txt)
                 if m:
                     new_slots["monthly_manwon"] = int(m.group(1))
-            # ── 청년정책 세부 슬롯 ──
+            # ── 청년정책 세부 슬롯 (v6.0 — marriage 제거) ──
             elif asked == "policy_employment":
                 parsed = self._parse_employment_choice(txt)
                 if parsed:
                     new_slots["policy_employment"] = parsed
-            elif asked == "policy_income":
-                # "소득 없음" / "없어" → 0
-                if re.search(r"없|0|없음", txt):
-                    new_slots["policy_income"] = "0"
-                else:
-                    parsed = _parse_manwon(txt)
-                    if parsed is not None:
-                        new_slots["policy_income"] = str(parsed)
-            elif asked == "policy_marriage":
-                parsed = self._parse_marriage_choice(txt)
-                if parsed:
-                    new_slots["policy_marriage"] = parsed
             elif asked == "policy_education":
                 parsed = self._parse_education_choice(txt)
                 if parsed:
                     new_slots["policy_education"] = parsed
+            elif asked == "policy_income":
+                # 소득 구간 선택지 (200만원 이하 / 200~300 / ... / 모름)
+                parsed = self._parse_income_band_choice(txt)
+                if parsed is not None:
+                    new_slots["policy_income"] = parsed
             elif asked == "policy_no_house":
                 parsed = self._parse_no_house_choice(txt)
                 if parsed is not None:
                     new_slots["policy_no_house"] = parsed
-
-            elif asked == "policy_card_selection":
-                # "재입력"/"재설정" 처리 — employment/education 다시 묻기
-                if re.search(r"재입력|재설정|다시\s*입력|조건\s*다시", txt):
-                    self.slots.pop("policy_employment", None)
-                    self.slots.pop("policy_education",  None)
-                    self.slots.pop("candidate_policies", None)
-                    self.slots.pop("show_more_offset",   None)
-                    # user_meta 값도 비워서 챗봇이 다시 묻도록
-                    self.user_meta["employment"] = ""
-                    self.user_meta["education"]  = ""
-                    self._selection_error = None
-                # "더보기" 처리
-                elif re.search(r"더\s*(보기|봐|줘|봐요)|다음|next", txt.lower()):
-                    candidates = self.slots.get("candidate_policies", [])
-                    curr_off   = self.slots.get("show_more_offset", 0)
-                    next_start = (curr_off + 1) * 5
-                    if next_start < len(candidates):
-                        self.slots["show_more_offset"] = curr_off + 1
-                # "없음" 처리 (정책 없이 진행)
-                elif re.search(r"^(없음|없어|없|패스|skip|건너|아니)$", txt.strip().lower()):
-                    self.slots["selected_policies"]  = []
-                    self.slots["required_conditions"] = []
-                    self._selection_error = None
-                else:
-                    # 번호 파싱 → 선택 검증
-                    nums = [int(n) for n in re.findall(r"\d+", txt)]
-                    candidates = self.slots.get("candidate_policies", [])
-                    selected = []
-                    for n in nums:
-                        idx = n - 1  # 1-based → 0-based
-                        if 0 <= idx < len(candidates):
-                            selected.append(candidates[idx])
-                    if selected:
-                        from youth_policy_module import validate_policy_selection
-                        result = validate_policy_selection(selected)
-                        if not result["valid"]:
-                            self._selection_error = result["error"]
-                        else:
-                            self.slots["selected_policies"]  = selected
-                            self.slots["required_conditions"] = self._compute_required_conditions(selected)
-                            self._selection_error = None
 
         # LLM이 추출한 work_address도 정제 후 검증
         if new_slots.get("work_address") and self.slots.get("work_address") is None:
@@ -882,20 +861,8 @@ class ChatBot:
         if self.slots.get("house_type") == "__skip__":
             self.slots["house_type"] = None  # 실제 v5에는 None 전달
 
-        # 다음 질문
+        # 다음 질문 (v6.0 — 카드 단계 제거됨)
         next_q = self._next_question()
-
-        # 카드 표시 처리
-        if next_q == "__show_cards__":
-            self.policy_cards = None  # 리셋 후 _build_card_message에서 세팅
-            card_msg = self._build_card_message()
-            # 선택 오류가 있으면 메시지 앞에 붙이기
-            if self._selection_error:
-                err = self._selection_error
-                self._selection_error = None
-                return f"⚠️ {err}\n\n{card_msg}", False, None
-            return card_msg, False, None
-
         if next_q is not None:
             return next_q, False, None
 
@@ -934,27 +901,23 @@ class ChatBot:
         if vibe:
             lines.append(f"- 동네 분위기: {', '.join(vibe)}")
         if s.get("use_youth_policy"):
-            selected = s.get("selected_policies") or []
-            if selected:
-                # 절감액 내림차순 정렬 → 1위 정책명 + 나머지 건수
-                sorted_sel = sorted(selected, key=lambda p: p.get("_monthly_saving", 0), reverse=True)
-                top_name = sorted_sel[0].get("plcyNm", "정책")
-                rest = len(sorted_sel) - 1
-                policy_str = f"{top_name} 외 {rest}건" if rest > 0 else top_name
-                lines.append(f"- 청년정책: {policy_str}")
-            else:
-                emp  = s.get("policy_employment", "")
-                inc  = s.get("policy_income", "")
-                mrg  = s.get("policy_marriage", "")
-                edu  = s.get("policy_education", "")
-                nh   = "무주택" if s.get("policy_no_house") == "y" else "주택소유" if s.get("policy_no_house") == "n" else ""
-                age  = self.user_meta.get("age", "")
-                detail = "  |  ".join(filter(None, [
-                    f"나이 {age}세" if age else "",
-                    emp, f"소득 {inc}만원" if inc else "",
-                    mrg, edu, nh,
-                ]))
-                lines.append(f"- 청년정책: 반영  ({detail})" if detail else "- 청년정책: 반영")
+            # v6.0: 카드 선택 단계 제거 → 자격 정보만 요약
+            emp = s.get("policy_employment", "")
+            edu = s.get("policy_education", "")
+            inc = s.get("policy_income", "")
+            nh_raw = s.get("policy_no_house", None)
+            nh  = ("무주택" if nh_raw == "y"
+                   else "주택소유" if nh_raw == "n"
+                   else "주택소유 모름" if nh_raw == ""
+                   else "")
+            age = self.user_meta.get("age", "")
+            inc_str = ("소득 모름" if inc == "모름"
+                       else f"소득 {inc}" if inc else "")
+            detail = "  |  ".join(filter(None, [
+                f"나이 {age}세" if age else "",
+                emp, edu, inc_str, nh,
+            ]))
+            lines.append(f"- 청년정책: 반영  ({detail})" if detail else "- 청년정책: 반영")
         return "\n".join(lines)
 
     # ── v5 파라미터 변환 ────────────────────────────────────
@@ -972,8 +935,8 @@ class ChatBot:
         use_policy = bool(s.get("use_youth_policy"))
 
         weight_infra  = 0.2 if vibe else 0.0
-        weight_policy = 0.2 if use_policy else 0.0
-        remaining     = 1.0 - weight_infra - weight_policy
+        weight_policy = 0.0   # v6.0: 정책은 추천 점수 미반영 (표시용 매칭만)
+        remaining     = 1.0 - weight_infra
 
         wp_pref = s.get("weight_preference", "균형")
         if wp_pref == "통근우선":
@@ -1001,17 +964,15 @@ class ChatBot:
 
         user_info = None
         if use_policy:
-            # user_meta(회원가입 정보) 우선, 없으면 챗봇 수집 슬롯 사용
+            # user_meta(회원정보) 우선, 없으면 챗봇 수집 슬롯 사용
+            # v6.0: income_band(구간) + no_house(y/n/"") + marriage 제거
             age_val = self.user_meta.get("age", "") or ""
             user_info = {
-                "age":           str(age_val),
-                "employment":    (self.user_meta.get("employment", "") or "").strip()
-                                 or s.get("policy_employment", ""),
-                "education":     (self.user_meta.get("education", "") or "").strip()
-                                 or s.get("policy_education", ""),
-                "income_manwon": s.get("policy_income", ""),
-                "marriage":      s.get("policy_marriage", ""),
-                "no_house":      s.get("policy_no_house", "y"),
+                "age":          str(age_val),
+                "employment":   s.get("policy_employment", ""),
+                "education":    s.get("policy_education", ""),
+                "income_band":  s.get("policy_income", ""),    # "200만원 이하" 등
+                "no_house":     s.get("policy_no_house", ""),  # "y"/"n"/""
             }
 
         return dict(
@@ -1029,12 +990,12 @@ class ChatBot:
             required_infra      = required_infra,
             weight_infra        = weight_infra,
             user_info           = user_info,
-            weight_policy       = weight_policy,
-            max_policy_display  = 3,
+            weight_policy       = weight_policy,   # v6.0: Stage C에서 0 고정 예정
+            max_policy_display  = 5,                # 5건까지 표시
             monthly_rent_manwon = monthly_rent_manwon,
             chatbot_mode        = True,
             vibe_list           = vibe or None,
-            selected_policies   = s.get("selected_policies") or None,
+            selected_policies   = None,             # v6.0: 카드 선택 제거
         )
 
     # ── 슬롯 상태 (우측 패널용) ─────────────────────────────
@@ -1058,13 +1019,18 @@ class ChatBot:
                 "filled": v is not None,
             })
 
-        # 청년정책 세부 슬롯 (반영 선택 시에만 표시)
+        # 청년정책 세부 슬롯 (v6.0 — 4개: employment/education/income/no_house)
         if self.slots.get("use_youth_policy"):
             for k in POLICY_SLOTS:
                 v = self.slots.get(k)
                 display_val = v
                 if k == "policy_no_house":
-                    display_val = "무주택" if v == "y" else "주택소유" if v == "n" else None
+                    display_val = ("무주택" if v == "y"
+                                   else "주택소유" if v == "n"
+                                   else "모름" if v == ""
+                                   else None)
+                elif v == "":
+                    display_val = "모름"
                 rows.append({
                     "key":    k,
                     "label":  SLOT_DISPLAY.get(k, k),

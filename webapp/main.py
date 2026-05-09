@@ -247,23 +247,38 @@ def _df_to_list(df) -> list:
         score   = (row.get("final_score")
                    or row.get("topsis_score")
                    or 0)
-        # policy_matched: 매칭된 청년정책 목록 → 프론트 카드에 표시
-        raw_pm = row.get("policy_matched")
-        policy_matched = []
-        if isinstance(raw_pm, list):
-            for p in raw_pm[:3]:  # 최대 3개
+        # 매물별 적용 가능 정책 (v6.0 — match_policies_for_property 결과)
+        raw_ap = row.get("applicable_policies")
+        applicable_policies = []
+        if isinstance(raw_ap, list):
+            for p in raw_ap:
                 if not isinstance(p, dict):
                     continue
-                name = p.get("plcyNm", "")
-                if not name:
-                    continue
-                policy_matched.append({
-                    "name":    name,
-                    "saving":  round(_safe_float(p.get("_monthly_saving", 0))),
-                    "benefit": p.get("_benefit_desc", ""),
-                    "url":     p.get("plcyUrlAddr", "") or p.get("polyBizSjnm", ""),
-                    "dup":     bool(p.get("_dup_limit", False)),
+                applicable_policies.append({
+                    "policy_id":             p.get("policy_id", ""),
+                    "policy_name":           p.get("policy_name", ""),
+                    "support_type":          p.get("support_type", ""),
+                    "benefit_desc":          p.get("benefit_desc", ""),
+                    "benefit_amount_manwon": _safe_float(p.get("benefit_amount_manwon", 0)),
+                    "benefit_period_months": int(_safe_float(p.get("benefit_period_months", 0))),
+                    "eligibility_status":    p.get("eligibility_status", "needs_check"),
+                    "extra_conditions":      p.get("extra_conditions", ""),
+                    "tags":                  list(p.get("tags") or []),
+                    "apply_url":             p.get("apply_url", ""),
+                    "is_gu_specific":        bool(p.get("is_gu_specific", False)),
+                    "source_org":            p.get("source_org", ""),
                 })
+        applicable_total = int(_safe_float(row.get("applicable_policies_total", len(applicable_policies))))
+
+        # 호환용 (구 policy_matched 키, 추후 제거 예정)
+        policy_matched = [
+            {"name": p["policy_name"],
+             "saving": round(p["benefit_amount_manwon"]),
+             "benefit": p["benefit_desc"],
+             "url": p["apply_url"],
+             "dup": False}
+            for p in applicable_policies[:3]
+        ]
 
         gu     = str(row.get("시군구_2") or row.get("gu") or "")
         dong   = str(row.get("읍면동")   or row.get("dong") or "")
@@ -292,8 +307,11 @@ def _df_to_list(df) -> list:
             "infra_score":   _to_pct(row.get("infra_score")),
             "safety_score":  None,  # 데이터 없음
             "green_score":   None,  # 데이터 없음
-            "policy_score":  _to_pct(row.get("policy_score")),
-            # 청년정책
+            "policy_score":  _to_pct(row.get("policy_score")),  # v6.0: 항상 0
+            # 청년정책 (v6.0 — applicable_policies 신규)
+            "applicable_policies":       applicable_policies,
+            "applicable_policies_total": applicable_total,
+            # 호환용 (구 키)
             "policy_matched": policy_matched,
             "policy_count":   len(policy_matched),
         })
@@ -305,7 +323,7 @@ def _quick_options_for(slot: Optional[str], bot: ChatBot) -> list:
     if bot._done:
         return []
 
-    # ── 청년정책 세부 슬롯 — "이전으로" 없이 바로 리턴 ──────────────
+    # ── 청년정책 세부 슬롯 (v6.0 — 카드 단계 제거) ──────────────
     if bot.slots.get("use_youth_policy") and bot._last_asked_slot:
         asked = bot._last_asked_slot
         if asked == "policy_employment" and bot.slots.get("policy_employment") is None:
@@ -314,16 +332,6 @@ def _quick_options_for(slot: Optional[str], bot: ChatBot) -> list:
                 {"label": "미취업자",  "value": "미취업자"},
                 {"label": "자영업자",  "value": "자영업자"},
             ]
-        if asked == "policy_card_selection":
-            cands = bot.slots.get("candidate_policies")
-            if cands is not None and len(cands) == 0 and bot.slots.get("selected_policies") is None:
-                return [
-                    {"label": "조건 다시 입력", "value": "재입력"},
-                    {"label": "정책 없이 진행", "value": "없음"},
-                ]
-            return [{"label": "정책 없이 진행", "value": "없음"}]
-        if asked == "policy_marriage" and bot.slots.get("policy_marriage") is None:
-            return [{"label": "미혼", "value": "① 미혼"}, {"label": "기혼", "value": "② 기혼"}]
         if asked == "policy_education" and bot.slots.get("policy_education") is None:
             return [
                 {"label": "고졸이하",  "value": "① 고졸이하"},
@@ -331,10 +339,20 @@ def _quick_options_for(slot: Optional[str], bot: ChatBot) -> list:
                 {"label": "대졸",      "value": "③ 대졸"},
                 {"label": "석박사",    "value": "④ 석박사"},
             ]
+        if asked == "policy_income" and bot.slots.get("policy_income") is None:
+            return [
+                {"label": "200만원 이하", "value": "① 200만원 이하"},
+                {"label": "200~300만원", "value": "② 200~300만원"},
+                {"label": "300~400만원", "value": "③ 300~400만원"},
+                {"label": "400~500만원", "value": "④ 400~500만원"},
+                {"label": "500만원 이상", "value": "⑤ 500만원 이상"},
+                {"label": "모름",          "value": "⑥ 모름"},
+            ]
         if asked == "policy_no_house" and bot.slots.get("policy_no_house") is None:
             return [
                 {"label": "무주택 (없음)", "value": "① 무주택"},
-                {"label": "주택 소유",     "value": "② 주택소유"},
+                {"label": "주택 소유",     "value": "② 주택 소유"},
+                {"label": "모름",          "value": "③ 모름"},
             ]
         return []
 
