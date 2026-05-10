@@ -1476,3 +1476,159 @@ body.modal-open {
   .modal-grid-2 { grid-template-columns: 1fr; }
   .policy-section-header { flex-direction: column; align-items: flex-start; }
 }
+
+
+/* ══════════════════════════════════════════════════════
+   예상 생활비 영수증 (Step 4 — /api/expense)
+══════════════════════════════════════════════════════ */
+
+/* 영수증 본문 — 기존 placeholder용 정렬을 항목 리스트용으로 재정의 */
+.expense-receipt-body {
+  padding: 20px 24px;
+  min-height: 280px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: stretch;
+  justify-content: flex-start;
+}
+
+.receipt-section { display: flex; flex-direction: column; gap: 4px; }
+.receipt-section-header {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 13px; font-weight: 700; color: var(--fg);
+}
+.receipt-section-icon { font-size: 14px; }
+.receipt-section-sub {
+  font-size: 11px; color: var(--fg-secondary);
+  font-weight: 400; margin-left: 2px;
+}
+.receipt-line {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 2px 0 2px 22px; font-size: 13px; color: var(--fg);
+}
+.receipt-line--solo { justify-content: flex-end; }
+.receipt-line-label { color: var(--fg-secondary); }
+.receipt-line-value { font-weight: 600; }
+
+.receipt-divider {
+  border-top: 1px dashed var(--border);
+  margin: 8px 0 4px;
+}
+.receipt-total {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-top: 4px;
+}
+.receipt-total-label { font-size: 14px; font-weight: 700; color: var(--fg); }
+.receipt-total-value { font-size: 22px; font-weight: 900; color: var(--green-dark); }
+
+.receipt-footnote {
+  margin-top: 12px; padding-top: 10px;
+  border-top: 1px solid var(--border);
+  font-size: 11px; color: var(--fg-secondary); line-height: 1.4;
+}
+.receipt-footnote-sub { font-size: 10px; opacity: 0.85; }
+
+/* 스켈레톤 (영수증/비교카드 fetch 중 표시) */
+.expense-skeleton {
+  display: flex; flex-direction: column; gap: 10px; width: 100%;
+}
+.skeleton-line {
+  height: 12px;
+  background: linear-gradient(90deg, var(--border) 0%, #F3F4F6 50%, var(--border) 100%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.6s infinite;
+  border-radius: 6px;
+}
+.skeleton-line--lg { height: 18px; }
+@keyframes skeleton-shimmer {
+  0%   { background-position:  200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* 비교카드 가로 막대 */
+.comparison-bars { display: flex; flex-direction: column; gap: 10px; }
+.comparison-bar-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas: "label meta" "track track";
+  gap: 4px 8px; align-items: center;
+}
+.comparison-bar-label {
+  grid-area: label;
+  font-size: 12px; font-weight: 600; color: var(--fg);
+}
+.comparison-bar-meta {
+  grid-area: meta;
+  display: flex; gap: 8px; align-items: baseline;
+}
+.comparison-bar-amount { font-size: 12px; font-weight: 700; color: var(--fg); }
+.comparison-bar-pct {
+  font-size: 11px; color: var(--fg-secondary);
+  min-width: 32px; text-align: right;
+}
+.comparison-bar-track {
+  grid-area: track; height: 6px;
+  background: var(--bg);
+  border-radius: 3px; overflow: hidden;
+}
+.comparison-bar-fill {
+  height: 100%; background: var(--green);
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+
+/* target 강조 (★ 현재 매물) */
+.comparison-bar-row--target .comparison-bar-fill { background: var(--green-dark); }
+.comparison-bar-row--target .comparison-bar-label {
+  color: var(--green-dark); font-weight: 800;
+}
+
+/* 서울 평균 — 회색 기준선 + 점선 윗구분 */
+.comparison-bar-row--avg .comparison-bar-fill { background: var(--fg-secondary); }
+.comparison-bar-row--avg .comparison-bar-label { color: var(--fg-secondary); }
+.comparison-bar-row--avg {
+  border-top: 1px dashed var(--border);
+  padding-top: 8px;
+  margin-top: 4px;
+}
+
+/* 비교카드 풀어쓴 텍스트 박스 */
+.comparison-explain {
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: var(--green-light);
+  border-radius: 8px;
+}
+.comparison-explain-head {
+  font-size: 11px; font-weight: 700;
+  color: var(--green-dark);
+}
+.comparison-explain-sub {
+  font-size: 10px; color: var(--fg-secondary);
+  margin-top: 2px; line-height: 1.4;
+}
+
+/* SVG 도넛 + 범례 */
+.comparison-donut-section {
+  display: flex; align-items: center; gap: 14px;
+  margin-top: 4px; padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.comparison-donut-wrap { width: 100px; height: 100px; flex-shrink: 0; }
+.comparison-donut { width: 100%; height: 100%; }
+.donut-center-num { font-size: 16px; font-weight: 900; fill: var(--fg); }
+.donut-center-unit { font-size: 9px; fill: var(--fg-secondary); }
+
+.comparison-donut-legend {
+  display: flex; flex-direction: column; gap: 6px; flex: 1;
+}
+.donut-legend-row {
+  display: flex; align-items: center; gap: 6px; font-size: 11px;
+}
+.donut-legend-dot {
+  width: 10px; height: 10px;
+  border-radius: 50%; flex-shrink: 0;
+}
+.donut-legend-label { flex: 1; color: var(--fg); }
+.donut-legend-value { color: var(--fg-secondary); font-weight: 600; }

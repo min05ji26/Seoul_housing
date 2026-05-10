@@ -33,6 +33,13 @@ ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
 from nlp_input_module import ChatBot
+from expense_module import (
+    ExpenseRequest, ExpenseBreakdown,
+    PropertyInfo, WorkplaceInfo,
+    calculate_total_expense, calculate_seoul_average_expense,
+    get_neighbor_gus,
+    FOOD_BASELINE, TRANSPORT_BASELINE, LEISURE_BASELINE,
+)
 from webapp.database import init_db
 from webapp.auth import router as auth_router, decode_token
 from webapp.password import router as password_router
@@ -187,12 +194,29 @@ async def recommend(req: RecommendRequest):
         )
 
         results = _df_to_list(final_df)
+
+        # expense API 호출 시 클라이언트가 함께 전달할 직장 좌표 (지오코딩 1회 추가)
+        # run_recommendation 내부에서 이미 동일 호출 발생하지만, 외부 노출 안 되어 별도 호출.
+        # 추천은 빈도 낮은 액션이므로 +1회 부담 미미. 실패 시 None → 프론트에서 expense 비활성화.
+        try:
+            from housing_recommendation_v5 import (
+                geocode_address_kakao_with_fallback, KAKAO_LOCAL_REST_API_KEY,
+            )
+            work_x, work_y, _ = geocode_address_kakao_with_fallback(
+                v5_params["work_address"], KAKAO_LOCAL_REST_API_KEY,
+            )
+        except Exception as exc:
+            print(f"[추천 API] 직장 좌표 지오코딩 실패: {exc}")
+            work_x, work_y = None, None
+
         elapsed = time.perf_counter() - t0
         print(f"[추천 API] 완료 {elapsed:.1f}s, 결과={len(results)}건")
         return {
-            "results":    results,
-            "seoul_avg":  seoul_avg,
-            "log":        log_buf.getvalue()[-2000:],
+            "results":       results,
+            "seoul_avg":     seoul_avg,
+            "log":           log_buf.getvalue()[-2000:],
+            "workplace_lat": work_y,   # 위도
+            "workplace_lon": work_x,   # 경도
         }
     except Exception as e:
         elapsed = time.perf_counter() - t0
@@ -200,6 +224,62 @@ async def recommend(req: RecommendRequest):
         return JSONResponse(status_code=500, content={"error": str(e)})
     finally:
         sys.stdout = old_stdout
+
+
+@app.post("/api/expense")
+async def expense(req: ExpenseRequest):
+    """매물 1건의 영수증 + 인접 구 비교 + 서울 평균.
+
+    - target: 사용자가 클릭한 매물 (직장까지 거리 기반 교통비 계산)
+    - neighbors: 인접 구 — 동일 매물(rent/maintenance) 가정 + gu만 바꿔 식비/교통 재계산
+                 (좌표는 GU_CENTER 사용. neighbor_gus 비어있으면 자동 선택 2개)
+    - seoul_average: 청년의 삶 baseline + 매물 DB 월세 평균
+    """
+    try:
+        from housing_recommendation_v5 import GU_CENTER
+
+        target = calculate_total_expense(req.target_property, req.workplace)
+
+        # 인접 구 결정: 명시되지 않으면 자동 선택, 명시됐으면 GU_CENTER에 있는 것만 채택
+        if req.neighbor_gus:
+            neighbor_gus = [g for g in req.neighbor_gus if g in GU_CENTER]
+        else:
+            neighbor_gus = get_neighbor_gus(req.target_property.gu, n=2)
+
+        neighbors: list[ExpenseBreakdown] = []
+        for ngu in neighbor_gus:
+            ng_lat, ng_lon = GU_CENTER[ngu]
+            nb_prop = PropertyInfo(
+                gu=ngu, lat=ng_lat, lon=ng_lon,
+                rent=req.target_property.rent,
+                maintenance=req.target_property.maintenance,
+            )
+            neighbors.append(calculate_total_expense(nb_prop, req.workplace))
+
+        seoul_avg = calculate_seoul_average_expense()
+
+        return {
+            "target":        target.model_dump(),
+            "neighbors":     [n.model_dump() for n in neighbors],
+            "seoul_average": seoul_avg.model_dump(),
+            "meta": {
+                "data_source": {
+                    "food":        "국무조정실 청년의 삶 실태조사 2024 (국가승인 제170002호)",
+                    "transport":   "청년의 삶 실태조사 + 서울연구원 통근통계",
+                    "leisure":     "청년의 삶 실태조사",
+                    "food_weight": "서울시 상권분석서비스 추정매출 2024 4분기 (4업종 평균단가)",
+                },
+                "baseline_food":      FOOD_BASELINE,
+                "baseline_transport": TRANSPORT_BASELINE,
+                "baseline_leisure":   LEISURE_BASELINE,
+                "comparison_basis": {
+                    "neighbors":     "동일 매물 가정 (target rent/maintenance 사용, 좌표는 구 중심)",
+                    "seoul_average": "서울 매물 DB 월세 평균 + 청년의 삶 baseline",
+                },
+            },
+        }
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 
 # ──────────────────────────────────────────────────────────
@@ -300,6 +380,9 @@ def _df_to_list(df) -> list:
             "price_manwon":  int(_safe_float(deposit)),  # 호환용 (구 키)
             # 통근
             "commute_min":   int(round(_safe_float(commute))),
+            # 좌표 (expense API 호출용 — cand_y=위도, cand_x=경도)
+            "lat":           _safe_float(row.get("cand_y"), 0.0),
+            "lon":           _safe_float(row.get("cand_x"), 0.0),
             # 점수 (0~100 정수)
             "score":         _to_pct(score),               # 종합 (final_score)
             "commute_score": _to_pct(row.get("commute_score")),

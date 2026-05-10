@@ -155,9 +155,10 @@
         <div class="property-summary-tags" id="modal-tags"></div>
       </div>
 
-      <!-- 예상 생활비 영역 (디자인만, 데이터 미연결) -->
+      <!-- 예상 생활비 영역 (Step 4 — /api/expense 연결) -->
       <div class="modal-section-title">💸 예상 생활비</div>
       <div class="modal-grid-2">
+        <!-- 좌: 영수증 -->
         <div class="expense-receipt">
           <div class="expense-receipt-header">
             <div class="expense-receipt-title-row">
@@ -167,18 +168,27 @@
             <div class="expense-receipt-subtitle" id="modal-expense-subtitle"></div>
             <div class="expense-receipt-date" id="modal-expense-date"></div>
           </div>
-          <div class="expense-receipt-body">
-            <div class="expense-placeholder">
-              예상 생활비 카드는 준비 중이에요.
-              <span class="expense-placeholder-sub">자치구별 외식단가·교통비·관리비 공공데이터 연동 예정</span>
+          <div class="expense-receipt-body" id="modal-receipt-body">
+            <div class="expense-skeleton">
+              <div class="skeleton-line skeleton-line--lg"></div>
+              <div class="skeleton-line"></div>
+              <div class="skeleton-line"></div>
+              <div class="skeleton-line"></div>
+              <div class="skeleton-line skeleton-line--lg"></div>
             </div>
           </div>
         </div>
+
+        <!-- 우: 비교카드 -->
         <div class="comparison-card">
           <div class="comparison-card-title">📊 동네별 생활비 비교</div>
-          <div class="expense-placeholder">
-            비교 카드는 준비 중이에요.
-            <span class="expense-placeholder-sub">인근 자치구 가격 비교 차트 예정</span>
+          <div id="modal-comparison-body">
+            <div class="expense-skeleton">
+              <div class="skeleton-line"></div>
+              <div class="skeleton-line"></div>
+              <div class="skeleton-line"></div>
+              <div class="skeleton-line"></div>
+            </div>
           </div>
         </div>
       </div>

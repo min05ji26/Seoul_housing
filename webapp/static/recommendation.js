@@ -33,6 +33,8 @@ let _allResults = [];   // 원본 결과 (정렬 전)
 let _seoulAvg   = null;
 let _currentSort = "score";  // score | commute | price
 let _currentView = "card";   // card | map
+let _workplaceCoords = null;  // /api/recommend 응답에서 채움 {lat, lon} or null
+const _expenseCache = {};     // {idx: ExpenseResponse} — 매물별 캐시
 
 // ── 초기화 ───────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
@@ -51,6 +53,9 @@ document.addEventListener("DOMContentLoaded", () => {
       const parsed = JSON.parse(cached);
       _allResults = parsed.results   || [];
       _seoulAvg   = parsed.seoul_avg || null;
+      _workplaceCoords = (parsed.workplace_lat != null && parsed.workplace_lon != null)
+        ? { lat: parsed.workplace_lat, lon: parsed.workplace_lon }
+        : null;
       if (_allResults.length) {
         renderPage();
         return;
@@ -90,6 +95,9 @@ async function loadResults(sessionId) {
 
     _allResults = data.results  || [];
     _seoulAvg   = data.seoul_avg || null;
+    _workplaceCoords = (data.workplace_lat != null && data.workplace_lon != null)
+      ? { lat: data.workplace_lat, lon: data.workplace_lon }
+      : null;
 
     if (!_allResults.length) {
       showError("조건에 맞는 추천 결과가 없어요. 조건을 조정해 보세요.");
@@ -351,6 +359,7 @@ function openPropertyModal(idx) {
   overlay.style.display = "flex";
   overlay.setAttribute("aria-hidden", "false");
   document.body.classList.add("modal-open");
+  renderModalExpense(r, idx);
 }
 
 function closePropertyModal() {
@@ -398,6 +407,240 @@ function renderModalContent(r, idx) {
   // 청년정책 섹션
   renderModalPolicies(r);
 }
+
+// ──────────────────────────────────────────────────────────
+// 예상 생활비 (Step 4 — /api/expense)
+// ──────────────────────────────────────────────────────────
+
+async function renderModalExpense(r, idx) {
+  // 1) 캐시 hit — 즉시 렌더
+  if (_expenseCache[idx]) {
+    const c = _expenseCache[idx];
+    renderReceipt(c.target);
+    renderComparisonCard(c.target, c.neighbors, c.seoul_average, c.meta);
+    return;
+  }
+
+  // 2) 좌표 검증
+  if (!_workplaceCoords) {
+    showExpenseError("직장 주소를 좌표로 변환하지 못했어요");
+    return;
+  }
+  if (r.lat == null || r.lon == null || (r.lat === 0 && r.lon === 0)) {
+    showExpenseError("매물 좌표 정보가 없어 계산할 수 없어요");
+    return;
+  }
+
+  // 3) fetch (실패 시 캐시 안 함)
+  try {
+    const data = await fetchExpense(r);
+    _expenseCache[idx] = data;
+    renderReceipt(data.target);
+    renderComparisonCard(data.target, data.neighbors, data.seoul_average, data.meta);
+  } catch (err) {
+    showExpenseError(err.message || "생활비 계산 중 오류가 발생했어요");
+  }
+}
+
+async function fetchExpense(r) {
+  const res = await fetch("/api/expense", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      target_property: {
+        gu:   r.gu,
+        lat:  r.lat,
+        lon:  r.lon,
+        rent: (r.monthly_rent_manwon || 0) * 10000,  // 만원 → 원
+        maintenance: null,                             // 매물 데이터에 관리비 없음 → fallback 사용
+      },
+      workplace:    _workplaceCoords,
+      neighbor_gus: [],                                // 빈 값이면 자동 선택 (인접 2개)
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `HTTP ${res.status}`);
+  }
+  return await res.json();
+}
+
+function renderReceipt(target) {
+  const body = document.getElementById("modal-receipt-body");
+  const fmt = v => v.toLocaleString() + "원";
+
+  body.innerHTML = `
+    <div class="receipt-section">
+      <div class="receipt-section-header">
+        <span class="receipt-section-icon">🏡</span>
+        <span class="receipt-section-title">주거비</span>
+      </div>
+      <div class="receipt-line">
+        <span class="receipt-line-label">월세</span>
+        <span class="receipt-line-value">${fmt(target.rent)}</span>
+      </div>
+      <div class="receipt-line">
+        <span class="receipt-line-label">관리비 (추정)</span>
+        <span class="receipt-line-value">${fmt(target.maintenance)}</span>
+      </div>
+    </div>
+
+    <div class="receipt-section">
+      <div class="receipt-section-header">
+        <span class="receipt-section-icon">🍚</span>
+        <span class="receipt-section-title">식비</span>
+        <span class="receipt-section-sub">마트·외식·카페</span>
+      </div>
+      <div class="receipt-line receipt-line--solo">
+        <span class="receipt-line-value">${fmt(target.food)}</span>
+      </div>
+    </div>
+
+    <div class="receipt-section">
+      <div class="receipt-section-header">
+        <span class="receipt-section-icon">🚇</span>
+        <span class="receipt-section-title">교통비</span>
+      </div>
+      <div class="receipt-line receipt-line--solo">
+        <span class="receipt-line-value">${fmt(target.transport)}</span>
+      </div>
+    </div>
+
+    <div class="receipt-section">
+      <div class="receipt-section-header">
+        <span class="receipt-section-icon">🎵</span>
+        <span class="receipt-section-title">여가·문화</span>
+      </div>
+      <div class="receipt-line receipt-line--solo">
+        <span class="receipt-line-value">${fmt(target.leisure)}</span>
+      </div>
+    </div>
+
+    <div class="receipt-divider"></div>
+
+    <div class="receipt-total">
+      <span class="receipt-total-label">이번 달 합계</span>
+      <span class="receipt-total-value">${fmt(target.total)}</span>
+    </div>
+
+    <div class="receipt-footnote">
+      <div>※ 청년 1인가구 평균 213만원</div>
+      <div class="receipt-footnote-sub">(출처: 청년의 삶 실태조사)</div>
+    </div>
+  `;
+}
+
+function renderComparisonCard(target, neighbors, seoulAvg, meta) {
+  const body = document.getElementById("modal-comparison-body");
+  const baseline = seoulAvg.total;
+  const fmt = v => v.toLocaleString() + "원";
+  const pct = v => Math.round((v / baseline) * 100);
+
+  const rows = [
+    { gu: target.gu,  total: target.total,  isTarget: true,  isAvg: false },
+    ...neighbors.map(n => ({ gu: n.gu, total: n.total, isTarget: false, isAvg: false })),
+    { gu: "서울 평균", total: seoulAvg.total, isTarget: false, isAvg: true },
+  ];
+
+  const MAX_BAR = 130;  // 130%까지가 막대 max (overflow 방지)
+
+  const barsHtml = rows.map(row => {
+    const p = pct(row.total);
+    const w = Math.min(p, MAX_BAR) / MAX_BAR * 100;
+    const cls = row.isTarget ? "comparison-bar-row comparison-bar-row--target"
+              : row.isAvg    ? "comparison-bar-row comparison-bar-row--avg"
+              : "comparison-bar-row";
+    const labelPrefix = row.isTarget ? "★ " : "";
+    const labelSuffix = row.isTarget ? " (현재)" : "";
+    return `
+      <div class="${cls}">
+        <div class="comparison-bar-label">${labelPrefix}${row.gu}${labelSuffix}</div>
+        <div class="comparison-bar-meta">
+          <span class="comparison-bar-amount">${fmt(row.total)}</span>
+          <span class="comparison-bar-pct">${p}%</span>
+        </div>
+        <div class="comparison-bar-track">
+          <div class="comparison-bar-fill" style="width:${w}%"></div>
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  const explainHtml = `
+    <div class="comparison-explain">
+      <div class="comparison-explain-head">※ 같은 매물이 다른 동네라면?</div>
+      <div class="comparison-explain-sub">인접 구는 동일 월세·관리비를 가정하여 식비·교통비만 비교했어요</div>
+    </div>
+  `;
+
+  const donutHtml = renderDonut(target);
+
+  body.innerHTML = `
+    <div class="comparison-bars">${barsHtml}</div>
+    ${explainHtml}
+    ${donutHtml}
+  `;
+}
+
+function renderDonut(b) {
+  // 4 segments — 색상은 CSS variables 직접 사용
+  const housing = b.rent + b.maintenance;
+  const segments = [
+    { label: "주거비", value: housing,     color: "var(--green-dark)"    },
+    { label: "식비",   value: b.food,      color: "var(--green)"         },
+    { label: "교통",   value: b.transport, color: "var(--green-light)"   },
+    { label: "여가",   value: b.leisure,   color: "var(--fg-secondary)"  },
+  ];
+  const sum = segments.reduce((a, s) => a + s.value, 0);
+
+  // SVG 도넛: viewBox 100x100, r=40, stroke-dasharray 트릭
+  const r = 40;
+  const C = 2 * Math.PI * r;
+  let offset = 0;
+  const arcs = segments.map(s => {
+    const len  = (s.value / sum) * C;
+    const dash = `${len} ${C - len}`;
+    const dOff = -offset;
+    offset += len;
+    return `<circle cx="50" cy="50" r="${r}" fill="none" stroke="${s.color}"
+            stroke-width="16" stroke-dasharray="${dash}" stroke-dashoffset="${dOff}"
+            transform="rotate(-90 50 50)"/>`;
+  }).join("");
+
+  const totalManwon = Math.round(sum / 10000);
+  const legendHtml = segments.map(s => `
+    <div class="donut-legend-row">
+      <span class="donut-legend-dot" style="background:${s.color}"></span>
+      <span class="donut-legend-label">${s.label}</span>
+      <span class="donut-legend-value">${s.value.toLocaleString()}원</span>
+    </div>
+  `).join("");
+
+  return `
+    <div class="comparison-donut-section">
+      <div class="comparison-donut-wrap">
+        <svg viewBox="0 0 100 100" class="comparison-donut">
+          ${arcs}
+          <text x="50" y="48" text-anchor="middle" class="donut-center-num">${totalManwon}</text>
+          <text x="50" y="62" text-anchor="middle" class="donut-center-unit">만원</text>
+        </svg>
+      </div>
+      <div class="comparison-donut-legend">${legendHtml}</div>
+    </div>
+  `;
+}
+
+function showExpenseError(msg) {
+  const body = document.getElementById("modal-receipt-body");
+  body.innerHTML = `
+    <div class="expense-placeholder">
+      ⚠ ${msg}
+      <span class="expense-placeholder-sub">잠시 후 다시 시도해주세요</span>
+    </div>`;
+  const cmpBody = document.getElementById("modal-comparison-body");
+  cmpBody.innerHTML = `<div class="expense-placeholder">—</div>`;
+}
+
 
 function renderModalPolicies(r) {
   const policies = Array.isArray(r.applicable_policies) ? r.applicable_policies : [];
