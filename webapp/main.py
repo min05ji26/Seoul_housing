@@ -212,15 +212,22 @@ async def recommend(req: RecommendRequest):
         elapsed = time.perf_counter() - t0
         print(f"[추천 API] 완료 {elapsed:.1f}s, 결과={len(results)}건")
         return {
-            "results":       results,
-            "seoul_avg":     seoul_avg,
-            "log":           log_buf.getvalue()[-2000:],
-            "workplace_lat": work_y,   # 위도
-            "workplace_lon": work_x,   # 경도
+            "results":         results,
+            "seoul_avg":       seoul_avg,
+            "log":             log_buf.getvalue()[-2000:],
+            "workplace_lat":   work_y,   # 위도
+            "workplace_lon":   work_x,   # 경도
+            # 지도뷰: 통근반경 원 그리기용
+            "allowed_minutes": v5_params.get("allowed_minutes"),
+            "transport_mode":  v5_params.get("transport_mode"),
         }
     except Exception as e:
+        # stdout을 먼저 복원해야 traceback이 실제 콘솔로 출력됨
+        sys.stdout = old_stdout
         elapsed = time.perf_counter() - t0
+        import traceback
         print(f"[추천 API] 오류 {elapsed:.1f}s — {e}")
+        traceback.print_exc()
         return JSONResponse(status_code=500, content={"error": str(e)})
     finally:
         sys.stdout = old_stdout

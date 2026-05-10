@@ -34,10 +34,35 @@ let _seoulAvg   = null;
 let _currentSort = "score";  // score | commute | price
 let _currentView = "card";   // card | map
 let _workplaceCoords = null;  // /api/recommend 응답에서 채움 {lat, lon} or null
+let _allowedMinutes  = null;  // 통근 허용 분 (반경 원)
+let _transportMode   = null;  // "car" | "transit"
 const _expenseCache = {};     // {idx: ExpenseResponse} — 매물별 캐시
+
+// ── 지도뷰 상태 ───────────────────────────────────────────
+let _kakaoMap        = null;
+let _kakaoMarkers    = [];
+let _kakaoOverlays   = [];
+let _kakaoCircle     = null;
+let _kakaoWorkMarker = null;
+let _mapInitialized  = false;
 
 // ── 초기화 ───────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
+  // 사이드바 지도뷰 메뉴 활성화 (추천 페이지에 진입한 시점에는 항상 결과가 있을 수 있음)
+  const navMap = document.getElementById("nav-map");
+  if (navMap) {
+    navMap.classList.remove("disabled");
+    navMap.href = "/recommendation?view=map";
+    navMap.addEventListener("click", (e) => {
+      // 같은 페이지 안에서는 SPA-like 동작: URL 갱신 + 뷰 전환
+      if (location.pathname === "/recommendation") {
+        e.preventDefault();
+        history.replaceState(null, "", "/recommendation?view=map");
+        switchView("map");
+      }
+    });
+  }
+
   const sessionId = localStorage.getItem("rec_session_id");
   if (!sessionId) {
     showState("no-session");
@@ -56,6 +81,8 @@ document.addEventListener("DOMContentLoaded", () => {
       _workplaceCoords = (parsed.workplace_lat != null && parsed.workplace_lon != null)
         ? { lat: parsed.workplace_lat, lon: parsed.workplace_lon }
         : null;
+      _allowedMinutes = parsed.allowed_minutes ?? null;
+      _transportMode  = parsed.transport_mode  ?? null;
       if (_allResults.length) {
         renderPage();
         return;
@@ -98,6 +125,8 @@ async function loadResults(sessionId) {
     _workplaceCoords = (data.workplace_lat != null && data.workplace_lon != null)
       ? { lat: data.workplace_lat, lon: data.workplace_lon }
       : null;
+    _allowedMinutes = data.allowed_minutes ?? null;
+    _transportMode  = data.transport_mode  ?? null;
 
     if (!_allResults.length) {
       showError("조건에 맞는 추천 결과가 없어요. 조건을 조정해 보세요.");
@@ -126,16 +155,147 @@ function attachControlHandlers() {
   }
   // 카드뷰/지도뷰
   viewBtns.forEach(btn => {
-    btn.addEventListener("click", () => {
-      _currentView = btn.dataset.view;
-      viewBtns.forEach(b => b.classList.toggle("active", b.dataset.view === _currentView));
-      const isMap = _currentView === "map";
-      mapViewEl.style.display = isMap ? "flex" : "none";
-      topCardWrap.style.display = isMap ? "none" : "";
-      gridEl.style.display = isMap ? "none" : "";
-      avgSectionEl.style.display = isMap ? "none" : (avgContentEl.children.length ? "block" : "none");
-    });
+    btn.addEventListener("click", () => switchView(btn.dataset.view));
   });
+}
+
+// ── 뷰 전환 (사이드바·URL 파라미터·토글 버튼 공통) ─────────
+function switchView(view) {
+  _currentView = view;
+  viewBtns.forEach(b => b.classList.toggle("active", b.dataset.view === _currentView));
+  const isMap = _currentView === "map";
+  mapViewEl.style.display = isMap ? "block" : "none";
+  topCardWrap.style.display = isMap ? "none" : "";
+  gridEl.style.display = isMap ? "none" : "";
+  avgSectionEl.style.display = isMap ? "none" : (avgContentEl.children.length ? "block" : "none");
+  if (isMap) ensureMapReady();
+}
+
+// ── 지도 초기화 (lazy — 첫 토글 시 1회) ────────────────────
+function ensureMapReady() {
+  if (_mapInitialized) {
+    renderMapMarkers();   // 결과만 갱신
+    return;
+  }
+  if (typeof kakao === "undefined" || !kakao.maps) {
+    document.getElementById("rec-map-canvas").innerHTML =
+      '<div class="rec-map-error">❌ 카카오맵 SDK 로드 실패 — 네트워크/도메인 등록을 확인하세요.</div>';
+    return;
+  }
+  kakao.maps.load(() => {
+    const container = document.getElementById("rec-map-canvas");
+    _kakaoMap = new kakao.maps.Map(container, {
+      center: new kakao.maps.LatLng(37.5665, 126.9780),  // 서울시청 (임시)
+      level: 7,
+    });
+    _mapInitialized = true;
+    renderMapMarkers();
+  });
+}
+
+// ── 지도 마커·반경 원 렌더링 ───────────────────────────────
+function renderMapMarkers() {
+  if (!_mapInitialized || !_kakaoMap) return;
+
+  // 기존 요소 제거
+  _kakaoMarkers.forEach(m => m.setMap(null));
+  _kakaoOverlays.forEach(o => o.setMap(null));
+  if (_kakaoCircle)     { _kakaoCircle.setMap(null); _kakaoCircle = null; }
+  if (_kakaoWorkMarker) { _kakaoWorkMarker.setMap(null); _kakaoWorkMarker = null; }
+  _kakaoMarkers = [];
+  _kakaoOverlays = [];
+
+  const bounds = new kakao.maps.LatLngBounds();
+  const sorted = sortedResults();
+
+  // 추천 매물 마커 (정렬 후 인덱스 = 모달 idx와 일치)
+  sorted.forEach((r, idx) => {
+    if (!r.lat || !r.lon) return;
+    const pos = new kakao.maps.LatLng(r.lat, r.lon);
+    bounds.extend(pos);
+
+    const marker = new kakao.maps.Marker({ map: _kakaoMap, position: pos, title: r.address || (r.gu + " " + r.dong) });
+    kakao.maps.event.addListener(marker, "click", () => openPropertyModal(idx));
+    _kakaoMarkers.push(marker);
+
+    // 라벨 (매물명·점수·가격) — 마커 위에 떠 있는 박스
+    const labelHtml = renderMapLabel(r);
+    const overlay = new kakao.maps.CustomOverlay({
+      map: _kakaoMap,
+      position: pos,
+      yAnchor: 2.4,
+      content: labelHtml,
+      clickable: true,
+    });
+    _kakaoOverlays.push(overlay);
+  });
+
+  // 직장 마커 + 통근 반경 원
+  if (_workplaceCoords && _workplaceCoords.lat && _workplaceCoords.lon) {
+    const wp = new kakao.maps.LatLng(_workplaceCoords.lat, _workplaceCoords.lon);
+    bounds.extend(wp);
+    _kakaoWorkMarker = new kakao.maps.Marker({
+      map: _kakaoMap,
+      position: wp,
+      title: "직장 위치",
+      image: new kakao.maps.MarkerImage(
+        "https://t1.daumcdn.net/mapjsapi/images/2x/marker_red.png",
+        new kakao.maps.Size(30, 42),
+      ),
+    });
+
+    // 통근반경 원 (직선거리 추정)
+    const radiusM = computeCommuteRadiusMeters(_allowedMinutes, _transportMode);
+    if (radiusM > 0) {
+      _kakaoCircle = new kakao.maps.Circle({
+        map: _kakaoMap,
+        center: wp,
+        radius: radiusM,
+        strokeWeight: 2,
+        strokeColor: "#10B981",
+        strokeOpacity: 0.7,
+        strokeStyle: "dashed",
+        fillColor: "#10B981",
+        fillOpacity: 0.06,
+      });
+    }
+  }
+
+  // 모든 마커가 보이도록 자동 fit
+  if (!bounds.isEmpty()) _kakaoMap.setBounds(bounds);
+}
+
+// 매물 마커 위 라벨 HTML
+function renderMapLabel(r) {
+  const score = r.score != null ? r.score : 0;
+  let priceTxt = "";
+  if (r.rent_type === "월세" && r.monthly_rent_manwon) {
+    priceTxt = `월 ${r.monthly_rent_manwon}만`;
+  } else if (r.deposit_manwon) {
+    priceTxt = `보증 ${Number(r.deposit_manwon).toLocaleString()}만`;
+  }
+  const name = (r.address || (r.gu + " " + r.dong) || "").replace(/"/g, "&quot;");
+  return (
+    '<div class="rec-map-marker-label">' +
+      '<div class="rec-map-marker-name">' + escHtmlSafe(name) + '</div>' +
+      '<div class="rec-map-marker-meta">' +
+        '<span class="rec-map-marker-score">⭐ ' + score + '</span>' +
+        (priceTxt ? '<span class="rec-map-marker-price">' + priceTxt + '</span>' : '') +
+      '</div>' +
+    '</div>'
+  );
+}
+
+function escHtmlSafe(s) {
+  return String(s).replace(/[&<>"']/g, c =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+}
+
+// 통근 시간 → 직선거리 반경(m). 도시 평균 이동속도 기반 단순 추정.
+function computeCommuteRadiusMeters(minutes, mode) {
+  if (!minutes || minutes <= 0) return 0;
+  const kmh = (mode === "car") ? 25 : 18;   // 자가용 25km/h, 대중교통 18km/h (도심 평균)
+  return Math.round((minutes / 60) * kmh * 1000);
 }
 
 // ── 정렬 ─────────────────────────────────────────────────
@@ -183,8 +343,19 @@ function renderPage() {
   // 서울 평균 비교
   if (_seoulAvg) renderAvgSection(_seoulAvg, results);
 
+  // 지도뷰 활성 상태면 마커도 정렬·필터 변경 따라 갱신
+  if (_currentView === "map" && _mapInitialized) renderMapMarkers();
+
   showState("results");
+
+  // URL ?view=map 으로 진입한 경우 자동 전환 (1회)
+  if (!_initialViewApplied) {
+    _initialViewApplied = true;
+    const params = new URLSearchParams(location.search);
+    if (params.get("view") === "map") switchView("map");
+  }
 }
+let _initialViewApplied = false;
 
 // ── 조건 바 렌더링 (localStorage 기반) ──────────────────
 function renderConditionBar() {

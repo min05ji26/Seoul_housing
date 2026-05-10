@@ -206,10 +206,12 @@ async function startRecommendation(sid) {
     // 결과 sessionStorage 캐싱 (추천 페이지에서 재사용)
     // workplace 좌표 포함 — 매물 모달의 예상 생활비 계산에 필요
     sessionStorage.setItem(REC_CACHE_KEY, JSON.stringify({
-      results:       data.results,
-      seoul_avg:     data.seoul_avg || null,
-      workplace_lat: data.workplace_lat,
-      workplace_lon: data.workplace_lon,
+      results:         data.results,
+      seoul_avg:       data.seoul_avg || null,
+      workplace_lat:   data.workplace_lat,
+      workplace_lon:   data.workplace_lon,
+      allowed_minutes: data.allowed_minutes,
+      transport_mode:  data.transport_mode,
     }));
     localStorage.setItem("rec_result_count", String(count));
     enableRecNav();
@@ -277,6 +279,8 @@ function resetChat() {
   const navBadge = document.getElementById("nav-rec-badge");
   if (navRec)   navRec.classList.add("disabled");
   if (navBadge) { navBadge.textContent = ""; navBadge.style.display = "none"; }
+  const navMap = document.getElementById("nav-map");
+  if (navMap) { navMap.classList.add("disabled"); navMap.href = "#"; }
 
   showInitialMessage();
   inputEl.focus();
@@ -310,9 +314,14 @@ function saveCondChips(slots) {
 function enableRecNav() {
   const navRec   = document.getElementById("nav-rec");
   const navBadge = document.getElementById("nav-rec-badge");
+  const navMap   = document.getElementById("nav-map");
   if (navRec) {
     navRec.classList.remove("disabled");
     navRec.href = "/recommendation";
+  }
+  if (navMap) {
+    navMap.classList.remove("disabled");
+    navMap.href = "/recommendation?view=map";
   }
   if (navBadge) {
     const count = parseInt(localStorage.getItem("rec_result_count") || "0", 10);
