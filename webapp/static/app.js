@@ -204,9 +204,12 @@ async function startRecommendation(sid) {
     const count   = results.length;
 
     // 결과 sessionStorage 캐싱 (추천 페이지에서 재사용)
+    // workplace 좌표 포함 — 매물 모달의 예상 생활비 계산에 필요
     sessionStorage.setItem(REC_CACHE_KEY, JSON.stringify({
-      results:   data.results,
-      seoul_avg: data.seoul_avg || null,
+      results:       data.results,
+      seoul_avg:     data.seoul_avg || null,
+      workplace_lat: data.workplace_lat,
+      workplace_lon: data.workplace_lon,
     }));
     localStorage.setItem("rec_result_count", String(count));
     enableRecNav();

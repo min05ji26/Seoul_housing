@@ -109,7 +109,9 @@ def _seoul_avg_rent_won() -> int:
         _SEOUL_AVG_RENT_WON_CACHE = SEOUL_AVG_RENT_FALLBACK
         return _SEOUL_AVG_RENT_WON_CACHE
 
-    df = pd.read_csv(paths[0], usecols=["월세금(만원)"])
+    # 주거비 CSV에 일부 잘못된 utf-8 byte sequence가 섞여있어 errors='replace'로 안전 처리
+    df = pd.read_csv(paths[0], usecols=["월세금(만원)"],
+                     encoding="utf-8", encoding_errors="replace")
     # 월세 0(전세) 행 제외 — 월세 평균 의미 보존
     rent = df["월세금(만원)"].astype(float)
     rent = rent[rent > 0]
