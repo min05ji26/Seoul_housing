@@ -1,6 +1,6 @@
 # Claude Code 인수인계 메모
 
-작성일: 2026-05-04 (최종 갱신: 2026-05-09 10차)
+작성일: 2026-05-04 (최종 갱신: 2026-05-10 11차)
 환경: Claude.ai → Claude Code (현재 작업 환경: 데스크탑 kj77k)
 
 ---
@@ -14,7 +14,7 @@
 3. `vibe_매핑_설계.md` — vibe 모듈 설계 + 학술 근거
 4. `phase7_챗봇_웹앱_설계.md` — 챗봇 + 웹앱 작업 지시서
 
-**현재 상태: 이전으로/수정하기 버튼 + 명시적 추천 시작 버튼 + 버튼 타이밍 fix 완료. 청년정책 혜택 표시 오류(문제 1) 및 필터 기준(문제 4) 수정 방향은 사용자와 협의 중.**
+**현재 상태: 이전으로 PREV 직전 질문 복귀로 의미 변경, 매물 정책 더보기 정상 동작, 예상 생활비 영수증 좌표 캐싱 + utf-8 디코드 오류 fix 완료. 청년정책 혜택 표시 오류(문제 1) 및 필터 기준(문제 4) 수정 방향은 사용자와 협의 중.**
 
 ---
 
@@ -420,6 +420,65 @@ git 커밋: `ebef1dc` — feat: prev/edit buttons + explicit rec start + button 
 
 ---
 
+### 이전으로 PREV 의미 변경 + 정책 더보기 + 영수증 fix (2026-05-10 11차)
+
+#### 문제 1: "이전으로" 누르면 엉뚱한 질문이 뜸
+
+**증상**: 사용자가 "강남구 테헤란로 521" 입력 후 챗봇이 출퇴근 수단 묻는 단계에서 "이전으로" 클릭 시, 직장 주소 질문이 아니라 "추천 우선순위" 질문이 뜸.
+
+**원인**: `_undo_last_slot()`이 `_slot_fill_order` LIFO 방식이라:
+- LLM이 한 턴에 여러 슬롯 추출 시 (예: 주소+예산+통근시간) → 마지막 추가된 슬롯이 popped
+- 추천 완료 후 EDIT으로 슬롯 흐트러진 상태에서 PREV → 엉뚱한 슬롯 popped
+- "① 오피스텔" 같이 `_parse_weight_choice`도 매칭되는 입력 시 weight_preference 자동 채워져 fill_order 끝에 추가
+
+**수정** (`nlp_input_module.py`):
+- `_undo_last_slot()`: `_slot_fill_order` LIFO 폐기 → `_last_asked_slot` 기준 직전 질문으로 되돌리기
+- `_required_order()` 신설: rent_type=월세면 monthly_manwon 포함하는 동적 필수 슬롯 순서
+- `_question_order()` 확장: 필수 슬롯 + vibe + use_youth_policy + POLICY_SLOTS (PREV용 전체 흐름)
+- `_prev_question_slot()` 신설: anchor 기반 직전 질문 인덱스 -1 계산
+- `_next_question()`: vibe / use_youth_policy 단계에서도 `_last_asked_slot` 갱신
+- PREV 후 단계 플래그 리셋 (target이 필수 슬롯 → `_asked_vibe`/`_asked_policy`/`_policy_intro_shown` 모두 리셋, vibe/policy 단계 → 그 이후 플래그만 리셋)
+
+**검증**: 9개 단계 (transport_mode → policy_employment) 모두 PREV가 정확히 직전 질문으로 복귀. 연속 PREV로 처음까지 거꾸로, vibe/policy 흐름도 PREV 후 자연스럽게 재개.
+
+#### 문제 2: 매물 모달 "더 보기" 버튼이 작동 안 함
+
+**증상**: "총 정책 14건" 표시인데 "더 보기 (9건 더)" 클릭해도 화면 변화 없음.
+
+**원인** (`housing_recommendation_v5.py:1655`): `match_policies_for_property(top_n=5)` — 백엔드가 매칭된 정책 중 5개만 잘라서 응답에 담음. 프론트는 카운트(14)만 받고 배열은 5개만. `policies.slice(0, 10)`도 결국 5개.
+
+**수정**: `top_n=5` → `top_n=100`. 매칭된 정책 전체를 응답에 포함. 프론트 페이지네이션은 이미 `_modalShownCount += 5`로 잘 작동.
+
+#### 문제 3: 강남구 도곡동/청담동 매물의 정책 5개가 동일
+
+**원인** (의도된 동작): `match_cache` 키가 `(gu, rent_type_label)`. 청년정책 매칭 기준은 자치구+임대유형+사용자정보로, 동(洞)은 매칭에 영향 없음. `youth_policy_module.match_policies_for_property()`도 동(洞) 기준 분기 없음.
+
+**결론**: 같은 강남구 매물이면 어느 동이든 같은 정책 풀이 적용되는 게 정상. 매물 위치 표시("강남구 도곡동 기준 매물")는 단지 매물 위치를 드러낼 뿐 정책 매칭과는 무관.
+
+#### 문제 4: 매물 모달 영수증이 "직장 주소를 좌표로 변환하지 못했어요"
+
+**원인** (`webapp/static/app.js:207-210`): 챗봇이 `/api/recommend` 응답을 sessionStorage에 캐시할 때 `results`/`seoul_avg`만 저장. 백엔드가 함께 보내준 `workplace_lat`/`workplace_lon`을 누락. 추천 페이지가 캐시 읽을 때 `_workplaceCoords = null` → 영수증 모듈 즉시 에러.
+
+**수정**: 캐시에 `workplace_lat`/`workplace_lon` 추가.
+
+#### 문제 5: /api/expense 500 (UnicodeDecodeError)
+
+**증상**: 매물 모달 영수증에서 "utf-8 codec can't decode byte 0xeb in position 93663".
+
+**원인** (`expense_module.py:112`): `_seoul_avg_rent_won()`이 200MB `주거비_데이터_최종통합버전.csv`를 읽을 때 `pd.read_csv()` 기본 인코딩만 사용. 일부 행에 잘못된 utf-8 byte sequence가 섞여있어 즉시 실패. 같은 CSV를 `housing_recommendation_v5.load_housing_data()`는 utf-8-sig → cp949 → euc-kr → `errors='replace'` fallback 체인으로 읽고 있어서 `/api/recommend`는 정상 동작.
+
+**수정**: `pd.read_csv(paths[0], usecols=["월세금(만원)"], encoding="utf-8", encoding_errors="replace")` — load_housing_data와 동일하게 안전 처리.
+
+#### 변경 파일 요약
+- `nlp_input_module.py` (+81, -12) — PREV 직전 질문 복귀 + 단계 플래그 리셋
+- `housing_recommendation_v5.py` (+2, -1) — 정책 매칭 top_n 5→100
+- `webapp/static/app.js` (+5, -2) — REC_CACHE_KEY에 workplace 좌표 추가
+- `expense_module.py` (+3, -1) — 주거비 CSV utf-8 errors='replace'
+
+git 커밋: `2a6a6aa`(PREV+더보기), `05660cf`(영수증 좌표+utf-8) — both pushed to origin/master.
+
+---
+
 ### 인증 시스템 통합 + git UI 매칭 (2026-05-05 3차)
 
 배경: 회원가입 정보(생년월일·성별)를 청년정책 1차 매칭에 활용하기 위해 로그인/회원가입 도입. UI는 https://github.com/min05ji26/Seoul_housing 레포에 맞춤.
@@ -697,6 +756,9 @@ Claude Code 새 세션에서:
 - **빠른 옵션 UI 개선** (2026-05-07): 구분선 + "💡 빠른 선택" 레이블 자동 표시.
 - **청년정책 API 페이지 범위 수정** (2026-05-07): max_pages 5→10, page_size 50→100. 250건 제한으로 누락되던 정책 해결.
 - **카카오 API 재시도 안전장치** (2026-05-07): `_kakao_request()` 헬퍼 — 3회 재시도, 지수 백오프(1s→2s), 4xx 즉시 실패. 3개 함수 적용.
+- **이전으로 PREV 의미 변경** (2026-05-10, 11차): `_slot_fill_order` LIFO → `_last_asked_slot` 기준 직전 질문 복귀. LLM 다중 슬롯 추출/EDIT 후 stale 상태에서도 정확히 직전 질문으로 복귀. 9단계 모두 검증 완료.
+- **매물 정책 더보기 동작** (2026-05-10, 11차): `match_policies_for_property(top_n=5)` → `top_n=100`. 백엔드가 매칭된 정책 전체 응답에 포함, 프론트 페이지네이션 정상 작동.
+- **예상 생활비 영수증 fix** (2026-05-10, 11차): app.js REC_CACHE_KEY에 workplace 좌표 캐싱 추가 + expense_module 주거비 CSV utf-8 `errors='replace'` 적용.
 
 **🔄 권장 추가 작업 (시간 여유 시)**
 - **회원가입 설계 메모 권장사항 반영**:
