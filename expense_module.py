@@ -103,8 +103,17 @@ def _seoul_avg_rent_won() -> int:
     if _SEOUL_AVG_RENT_WON_CACHE is not None:
         return _SEOUL_AVG_RENT_WON_CACHE
 
-    import glob as _glob
-    paths = sorted(_glob.glob(str(ROOT / HOUSING_CSV_GLOB)))
+    # macOS NFC/NFD 정규화 차이 방어 — Finder로 옮긴 파일은 NFD라 NFC 패턴 glob 매치 실패
+    import unicodedata
+    paths = []
+    for _d in ROOT.iterdir():
+        if _d.is_dir() and unicodedata.normalize("NFC", _d.name) == "사용_csv_모음":
+            paths = sorted(
+                str(_p) for _p in _d.iterdir()
+                if _p.is_file() and _p.suffix.lower() == ".csv"
+                and "주거비" in unicodedata.normalize("NFC", _p.name)
+            )
+            break
     if not paths:
         _SEOUL_AVG_RENT_WON_CACHE = SEOUL_AVG_RENT_FALLBACK
         return _SEOUL_AVG_RENT_WON_CACHE

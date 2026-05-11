@@ -38,6 +38,14 @@ KAKAO_MOBILITY_REST_API_KEY = os.getenv("KAKAO_MOBILITY_REST_API_KEY")
 ODSAY_API_KEY               = os.getenv("ODSAY_API_KEY")
 MOLIT_API_KEY               = os.getenv("MOLIT_API_KEY")
 
+# 공공데이터포털 키 자동 정규화 (Encoding 키 ↔ Decoding 키 호환)
+# - requests가 params 직렬화 시 한 번 더 URL-encode 하므로,
+#   사용자가 Encoding 키(`...%3D%3D`)를 넣으면 이중 인코딩 → 401.
+# - unquote는 idempotent: Decoding 키(`...==`)에는 영향 없음.
+import urllib.parse as _urlp
+if MOLIT_API_KEY:
+    MOLIT_API_KEY = _urlp.unquote(MOLIT_API_KEY)
+
 _missing_keys = [k for k, v in {
     "KAKAO_LOCAL_REST_API_KEY": KAKAO_LOCAL_REST_API_KEY,
     "KAKAO_MOBILITY_REST_API_KEY": KAKAO_MOBILITY_REST_API_KEY,

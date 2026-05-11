@@ -27,7 +27,10 @@ def get_user(user_id: int):
     conn = get_conn()
     try:
         row = conn.execute(
-            "SELECT id, nickname, email, created_at FROM users WHERE id=?", (user_id,)
+            """SELECT id, nickname, email, kakao_id,
+                      birth_date, gender, created_at
+               FROM users WHERE id=?""",
+            (user_id,)
         ).fetchone()
     finally:
         conn.close()

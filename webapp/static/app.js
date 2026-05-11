@@ -60,7 +60,10 @@ const PROGRESS_STEPS = [
 
 // ── 초기화 ───────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
-  if (localStorage.getItem("rec_session_id")) enableRecNav();
+  
+  const _cachedSession = sessionStorage.getItem(SESSION_ID_KEY);
+  if (_cachedSession) enableRecNav();
+  else localStorage.removeItem("rec_result_count");
 
   renderProgressList([]);
   renderConditionTable([]);
@@ -260,6 +263,7 @@ function resetChat() {
   localStorage.removeItem("rec_session_id");
   localStorage.removeItem("rec_result_count");
   localStorage.removeItem("rec_cond_chips");
+  
 
   // 상태 초기화
   sessionId      = null;
@@ -324,8 +328,10 @@ function enableRecNav() {
     navMap.href = "/recommendation?view=map";
   }
   if (navBadge) {
+    // 현재 세션에 추천 결과가 있을 때만 배지 표시
+    const sessionId = localStorage.getItem('rec_session_id');
     const count = parseInt(localStorage.getItem("rec_result_count") || "0", 10);
-    if (count > 0) {
+    if (count > 0 && sessionId) {
       navBadge.textContent = count;
       navBadge.style.display = "";
     } else {

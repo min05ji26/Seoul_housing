@@ -45,6 +45,7 @@ from webapp.auth import router as auth_router, decode_token
 from webapp.password import router as password_router
 from webapp.user import router as user_router
 from webapp.checklist import router as checklist_router
+from webapp.favorites import router as favorites_router
 
 
 # ── DB 초기화 (서버 시작 시 1회) ─────────────────────────
@@ -59,6 +60,7 @@ app.include_router(auth_router,      prefix="/auth",      tags=["인증"])
 app.include_router(password_router,  prefix="/password",  tags=["비밀번호"])
 app.include_router(user_router,      prefix="/user",      tags=["유저"])
 app.include_router(checklist_router, prefix="/checklist", tags=["체크리스트"])
+app.include_router(favorites_router, prefix="/api/favorites", tags=["찜목록"])
 
 STATIC_DIR = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
@@ -115,6 +117,14 @@ async def forgot_password_page():
 @app.get("/recommendation")
 async def recommendation_page():
     return FileResponse(str(STATIC_DIR / "recommendation.html"))
+
+@app.get("/mypage")
+async def mypage_page():
+    return FileResponse(str(STATIC_DIR / "mypage.html"))
+
+@app.get("/favorites")
+async def favorites_page():
+    return FileResponse(str(STATIC_DIR / "favorites.html"))
 
 
 @app.get("/api/health")
@@ -174,8 +184,18 @@ async def recommend(req: RecommendRequest):
 
     v5_params = bot.get_v5_params()
 
-    import glob as glob_mod
-    csv_files = sorted(glob_mod.glob(str(ROOT / "사용_csv_모음" / "*주거비*.csv")))
+    # 매물 CSV 검색 (macOS 한글 유니코드 NFC/NFD 정규화 차이 방어)
+    # ─ Finder/외부에서 옮긴 파일이 NFD로 저장되면 NFC 패턴 glob이 매치 실패하는 문제 해결
+    import unicodedata
+    csv_files = []
+    for _d in ROOT.iterdir():
+        if _d.is_dir() and unicodedata.normalize("NFC", _d.name) == "사용_csv_모음":
+            csv_files = sorted(
+                str(_p) for _p in _d.iterdir()
+                if _p.is_file() and _p.suffix.lower() == ".csv"
+                and "주거비" in unicodedata.normalize("NFC", _p.name)
+            )
+            break
     if not csv_files:
         return JSONResponse(status_code=500, content={"error": "주거지 CSV 없음"})
 
@@ -388,8 +408,9 @@ def _df_to_list(df) -> list:
             # 통근
             "commute_min":   int(round(_safe_float(commute))),
             # 좌표 (expense API 호출용 — cand_y=위도, cand_x=경도)
-            "lat":           _safe_float(row.get("cand_y"), 0.0),
-            "lon":           _safe_float(row.get("cand_x"), 0.0),
+            # fallback(CSV 통계) 경로에서는 cand_x/y가 없으므로 동 중심 좌표(dong_x/y)로 폴백
+            "lat":           _safe_float(row.get("cand_y") or row.get("dong_y"), 0.0),
+            "lon":           _safe_float(row.get("cand_x") or row.get("dong_x"), 0.0),
             # 점수 (0~100 정수)
             "score":         _to_pct(score),               # 종합 (final_score)
             "commute_score": _to_pct(row.get("commute_score")),

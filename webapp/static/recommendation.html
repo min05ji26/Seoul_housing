@@ -35,16 +35,6 @@
       </a>
     </div>
 
-    <div class="sidebar-section">
-      <div class="sidebar-label">도구</div>
-      <a class="nav-item disabled" href="#">
-        <span class="nav-left"><span class="nav-icon">📋</span> 이사 체크리스트</span>
-      </a>
-      <a class="nav-item disabled" href="#">
-        <span class="nav-left"><span class="nav-icon">💸</span> 예상 생활비</span>
-      </a>
-    </div>
-
     <div id="rec-conditions-sidebar" style="display:none">
       <div class="sidebar-label">검색 조건</div>
       <div id="rec-cond-chips"></div>
@@ -52,7 +42,8 @@
 
     <div class="sidebar-bottom">
       <div class="sidebar-label">계정</div>
-      <a class="nav-item disabled" href="#"><span class="nav-left"><span class="nav-icon">👤</span> 내 정보</span></a>
+      <a class="nav-item" href="/mypage"><span class="nav-left"><span class="nav-icon">👤</span> 내 정보</span></a>
+      <a class="nav-item" href="/favorites"><span class="nav-left"><span class="nav-icon">❤️</span> 찜 목록</span></a>
       <a class="nav-item" href="#" onclick="handleLogout(event)"><span class="nav-left"><span class="nav-icon">🚪</span> 로그아웃</span></a>
       <div class="user-chip">
         <div class="user-avatar">🐻</div>
@@ -120,13 +111,13 @@
       <!-- 2~N위 그리드 -->
       <div class="rec-grid" id="rec-grid"></div>
 
-      <!-- 서울 평균 비교 (우리만 있는 강점) -->
+      <!-- 서울 평균 비교 -->
       <div id="rec-avg-section" style="display:none">
         <div class="rec-avg-chip">📊 서울 평균 대비 비교</div>
         <div id="rec-avg-content"></div>
       </div>
 
-      <!-- 지도뷰 (카카오맵 + 우측 매물 패널) -->
+      <!-- 지도뷰 -->
       <div id="rec-map-view" style="display:none">
         <div id="rec-map-canvas"></div>
         <div id="rec-map-legend">
@@ -148,7 +139,7 @@
         <button class="modal-close-btn" id="modal-close-btn" aria-label="닫기">✕</button>
       </div>
 
-      <!-- 매물 요약 카드 (그린 배경) -->
+      <!-- 매물 요약 카드 -->
       <div class="property-summary-card">
         <div class="property-icon-box">🏢</div>
         <div class="property-summary-info">
@@ -159,10 +150,9 @@
         <div class="property-summary-tags" id="modal-tags"></div>
       </div>
 
-      <!-- 예상 생활비 영역 (Step 4 — /api/expense 연결) -->
+      <!-- 예상 생활비 -->
       <div class="modal-section-title">💸 예상 생활비</div>
       <div class="modal-grid-2">
-        <!-- 좌: 영수증 -->
         <div class="expense-receipt">
           <div class="expense-receipt-header">
             <div class="expense-receipt-title-row">
@@ -183,7 +173,6 @@
           </div>
         </div>
 
-        <!-- 우: 비교카드 -->
         <div class="comparison-card">
           <div class="comparison-card-title">📊 동네별 생활비 비교</div>
           <div id="modal-comparison-body">
@@ -197,7 +186,7 @@
         </div>
       </div>
 
-      <!-- 청년정책 맞춤 안내 (★ 핵심 섹션) -->
+      <!-- 청년정책 -->
       <div class="policy-section" id="modal-policy-section">
         <div class="policy-section-header">
           <div class="policy-section-header-left">
@@ -224,7 +213,6 @@
   </div>
 
 <script>
-  // 인증 확인
   (function() {
     if (!localStorage.getItem('token')) {
       location.href = '/login';

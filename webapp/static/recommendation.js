@@ -36,6 +36,7 @@ let _currentView = "card";   // card | map
 let _workplaceCoords = null;  // /api/recommend 응답에서 채움 {lat, lon} or null
 let _allowedMinutes  = null;  // 통근 허용 분 (반경 원)
 let _transportMode   = null;  // "car" | "transit"
+let _favKeySet = {};  // { property_key: true/false } — 하트 상태 관리
 const _expenseCache = {};     // {idx: ExpenseResponse} — 매물별 캐시
 
 // ── 지도뷰 상태 ───────────────────────────────────────────
@@ -347,6 +348,7 @@ function renderPage() {
   if (_currentView === "map" && _mapInitialized) renderMapMarkers();
 
   showState("results");
+  loadFavKeys();
 
   // URL ?view=map 으로 진입한 경우 자동 전환 (1회)
   if (!_initialViewApplied) {
@@ -1002,24 +1004,75 @@ function formatManwon(manwon, compact) {
   return compact ? `${n.toLocaleString()}만` : `${n.toLocaleString()}만원`;
 }
 
-// ── 즐겨찾기 토글 ────────────────────────────────────────
-function toggleFav(btn) {
+// ── 찜하기 토글 (좋아요 버튼) ─────────────────────────────────
+async function toggleFav(btn) {
   if (!btn) return;
-  const filled = btn.textContent.trim() === "❤️";
-  btn.textContent = filled ? "🤍" : "❤️";
-  // localStorage 저장 (id 기반)
-  const id = btn.dataset.id || "";
-  const favs = JSON.parse(localStorage.getItem("rec_favs") || "[]");
-  if (filled) {
-    const idx = favs.indexOf(id);
-    if (idx >= 0) favs.splice(idx, 1);
-  } else {
-    if (!favs.includes(id)) favs.push(id);
+
+  const userId = parseInt(localStorage.getItem('user_id') || '0');
+  if (!userId) {
+    alert('로그인이 필요해요.');
+    return;
   }
-  localStorage.setItem("rec_favs", JSON.stringify(favs));
+
+  const idx = parseInt(btn.dataset.id || '0');
+  const results = sortedResults();
+  const r = results[idx];
+  if (!r) return;
+
+  const isFilled = btn.textContent.trim() === '❤️';
+
+  // 낙관적 UI 업데이트
+  btn.textContent = isFilled ? '🤍' : '❤️';
+  btn.disabled = true;
+
+  try {
+    const res = await fetch(`/favorites/toggle?user_id=${userId}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + (localStorage.getItem('token') || ''),
+      },
+      body: JSON.stringify({
+        address:             r.address || '',
+        gu:                  r.gu || '',
+        dong:                r.dong || '',
+        house_type:          r.house_type || '',
+        rent_type:           r.rent_type || '',
+        area_m2:             r.area_m2 || 0,
+        deposit_manwon:      r.deposit_manwon || 0,
+        monthly_rent_manwon: r.monthly_rent_manwon || 0,
+        commute_min:         r.commute_min || 0,
+        score:               r.score || 0,
+        lat:                 r.lat || 0,
+        lon:                 r.lon || 0,
+        commute_score:       r.commute_score,
+        cost_score:          r.cost_score,
+        infra_score:         r.infra_score,
+        applicable_policies:       r.applicable_policies || [],
+        applicable_policies_total: r.applicable_policies_total || 0,
+      }),
+    });
+
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || '요청 실패');
+
+    const raw = `${(r.address || '').trim()}|${r.area_m2 || 0}|${r.deposit_manwon || 0}|${r.monthly_rent_manwon || 0}`;
+    if (data.action === 'added') {
+      _favKeySet[raw] = data.property_key;
+    } else {
+      delete _favKeySet[raw];
+    }
+    syncHeartButtons();
+
+  } catch (e) {
+    // 실패 시 원래대로 되돌리기
+    btn.textContent = isFilled ? '❤️' : '🤍';
+    console.error('찜 토글 실패:', e);
+  } finally {
+    btn.disabled = false;
+  }
 }
 window.toggleFav = toggleFav;
-window.onMoreCardClick = onMoreCardClick;
 
 // ── 서울 평균 비교 ──────────────────────────────────────
 function renderAvgSection(seoulAvg, results) {
@@ -1082,4 +1135,42 @@ function escHtml(s) {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+async function loadFavKeys() {
+  const userId = parseInt(localStorage.getItem('user_id') || '0');
+  if (!userId) return;
+
+  try {
+    const res = await fetch(`/favorites/keys?user_id=${userId}`, {
+      headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('token') || '') },
+    });
+    const data = await res.json();
+    // keys는 MD5 해시라 프론트에서 직접 비교 불가
+    // 대신 찜 목록 전체를 가져와서 address+area+price로 매칭
+    const favsRes = await fetch(`/favorites?user_id=${userId}`, {
+      headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('token') || '') },
+    });
+    const favs = await favsRes.json();
+    _favKeySet = {};
+    favs.forEach(f => {
+      // 동일한 raw 문자열을 키로 사용
+      const raw = `${(f.address || '').trim()}|${f.area_m2 || 0}|${f.deposit_manwon || 0}|${f.monthly_rent_manwon || 0}`;
+      _favKeySet[raw] = f.property_key;
+    });
+    syncHeartButtons();
+  } catch (e) {
+    console.error('찜 키 로드 실패:', e);
+  }
+}
+
+function syncHeartButtons() {
+  const results = sortedResults();
+  document.querySelectorAll('.rec-heart-btn').forEach(btn => {
+    const idx = parseInt(btn.dataset.id || '0');
+    const r = results[idx];
+    if (!r) return;
+    const raw = `${(r.address || '').trim()}|${r.area_m2 || 0}|${r.deposit_manwon || 0}|${r.monthly_rent_manwon || 0}`;
+    btn.textContent = _favKeySet[raw] ? '❤️' : '🤍';
+  });
 }

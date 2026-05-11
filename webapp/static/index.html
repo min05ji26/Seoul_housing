@@ -33,17 +33,6 @@
       </a>
     </div>
 
-    <div class="sidebar-section">
-      <div class="sidebar-label">도구</div>
-      <a class="nav-item disabled" href="#">
-        <span class="nav-left"><span class="nav-icon">📋</span> 이사 체크리스트</span>
-        <span class="nav-pct">35%</span>
-      </a>
-      <a class="nav-item disabled" href="#">
-        <span class="nav-left"><span class="nav-icon">💸</span> 예상 생활비</span>
-      </a>
-    </div>
-
     <div id="current-conditions" style="display:none">
       <div class="sidebar-label">현재 검색 조건</div>
       <div id="condition-chips"></div>
@@ -51,7 +40,8 @@
 
     <div class="sidebar-bottom">
       <div class="sidebar-label">계정</div>
-      <a class="nav-item disabled" href="#"><span class="nav-left"><span class="nav-icon">👤</span> 내 정보</span></a>
+      <a class="nav-item" href="/mypage"><span class="nav-left"><span class="nav-icon">👤</span> 내 정보</span></a>
+      <a class="nav-item" href="/favorites"><span class="nav-left"><span class="nav-icon">❤️</span> 찜 목록</span></a>
       <a class="nav-item" href="#" onclick="handleLogout(event)"><span class="nav-left"><span class="nav-icon">🚪</span> 로그아웃</span></a>
       <div class="user-chip">
         <div class="user-avatar">🐻</div>
@@ -103,20 +93,11 @@
         <div id="condition-table"></div>
       </div>
 
-      <!-- 빠른 이동 -->
-      <div class="panel-section">
-        <div class="panel-section-title">빠른 이동</div>
-        <div class="quick-link"><span class="ql-icon">📋</span> 이사 체크리스트</div>
-        <div class="quick-link"><span class="ql-icon">💸</span> 예상 생활비</div>
-        <div class="quick-link"><span class="ql-icon">👤</span> 내 정보</div>
-      </div>
-
     </div>
   </aside>
 
 </div>
 <script>
-  // 로그인 토큰 없으면 /login 으로 리다이렉트
   (function() {
     if (!localStorage.getItem('token')) {
       location.href = '/login';
@@ -133,8 +114,9 @@
 
   function handleLogout(e) {
     e.preventDefault();
-    localStorage.removeItem('token');
-    localStorage.removeItem('nickname');
+    ['token','user_id','nickname','workplace','last_search',
+     'rec_result_count','rec_session_id','rec_favs','rec_cond_chips']
+      .forEach(k => localStorage.removeItem(k));
     location.href = '/login';
   }
 </script>

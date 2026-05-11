@@ -123,6 +123,36 @@ def init_db():
         )
     """)
 
+    # ── favorites (찜한 매물) ─────────────────────────────
+    # property_key = address|area_m2|deposit|monthly_rent 해시 (백엔드 자동 생성)
+    # snapshot_json = 매물 카드 전체 dict (주소/점수/정책/좌표 등)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS favorites (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id             INTEGER NOT NULL REFERENCES users(id),
+            property_key        TEXT NOT NULL,
+            address             TEXT,
+            gu                  TEXT,
+            dong                TEXT,
+            house_type          TEXT,
+            rent_type           TEXT,
+            area_m2             REAL,
+            deposit_manwon      INTEGER,
+            monthly_rent_manwon INTEGER,
+            commute_min         INTEGER,
+            score               INTEGER,
+            lat                 REAL,
+            lon                 REAL,
+            snapshot_json       TEXT,
+            created_at          TEXT DEFAULT (datetime('now')),
+            UNIQUE(user_id, property_key)
+        )
+    """)
+    # 조회 속도용 인덱스
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_favorites_user ON favorites(user_id, created_at DESC)"
+    )
+
     conn.commit()
     conn.close()
     print(f"[DB] 초기화 완료: {DB_PATH}")
